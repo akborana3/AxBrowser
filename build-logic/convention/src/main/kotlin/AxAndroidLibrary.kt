@@ -24,8 +24,10 @@ class AxAndroidLibrary : Plugin<Project> {
                 }
             }
 
-            extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmOptions> {
-                jvmTarget = "17"
+            extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension> {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
             }
         }
     }

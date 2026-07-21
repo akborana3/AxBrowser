@@ -3,6 +3,7 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.the
+import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 class AxAndroidApplication : Plugin<Project> {
     override fun apply(target: Project) {
@@ -44,8 +45,10 @@ class AxAndroidApplication : Plugin<Project> {
                 }
             }
 
-            extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmOptions> {
-                jvmTarget = "17"
+            extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension> {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
             }
         }
     }
