@@ -1,6 +1,7 @@
 plugins {
     id("axbrowser.android.library")
     id("com.google.devtools.ksp")
+    id("com.google.dagger.hilt.android")
 }
 
 android {
