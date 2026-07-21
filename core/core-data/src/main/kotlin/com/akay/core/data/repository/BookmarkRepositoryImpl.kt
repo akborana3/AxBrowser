@@ -60,7 +60,7 @@ class BookmarkRepositoryImpl @Inject constructor(
         bookmarkDao.deleteFolderById(id)
     }
 
-    override fun searchBookmarks(query: String): Flow<List<Bookmark>> {
+    override suspend fun searchBookmarks(query: String): Flow<List<Bookmark>> {
         return bookmarkDao.searchBookmarks(query).map { entities ->
             entities.map { it.toDomain() }
         }

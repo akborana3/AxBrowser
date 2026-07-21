@@ -51,7 +51,7 @@ class HistoryRepositoryImpl @Inject constructor(
         historyDao.deleteAllHistory()
     }
 
-    override fun searchHistory(query: String): Flow<List<HistoryItem>> {
+    override suspend fun searchHistory(query: String): Flow<List<HistoryItem>> {
         return historyDao.searchHistory(query).map { entities ->
             entities.map { it.toDomain() }
         }
