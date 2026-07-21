@@ -48,7 +48,7 @@ class FakeBookmarkRepository : BookmarkRepository {
         folders.value = folders.value.filter { it.id != id }
     }
 
-    override fun searchBookmarks(query: String): Flow<List<Bookmark>> {
+    override suspend fun searchBookmarks(query: String): Flow<List<Bookmark>> {
         return flowOf(bookmarks.value.filter {
             it.title.contains(query, ignoreCase = true) || it.url.contains(query, ignoreCase = true)
         })
