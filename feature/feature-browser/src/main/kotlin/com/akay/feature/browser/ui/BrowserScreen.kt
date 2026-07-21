@@ -157,7 +157,7 @@ fun BrowserScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
-                        settings.setLayerType(WebView.LAYER_TYPE_HARDWARE, null)
+                        setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
                         settings.userAgentString = settings.userAgentString.replace(
                             "Mobile",
                             "Desktop"
