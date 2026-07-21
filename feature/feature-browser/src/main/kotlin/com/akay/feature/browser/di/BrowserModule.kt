@@ -1,0 +1,17 @@
+package com.akay.feature.browser.di
+
+import com.akay.core.data.repository.TabRepositoryImpl
+import com.akay.core.domain.repository.TabRepository
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class BrowserModule {
+    @Binds
+    @Singleton
+    abstract fun bindTabRepository(impl: TabRepositoryImpl): TabRepository
+}

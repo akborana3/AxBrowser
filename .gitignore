@@ -1,0 +1,35 @@
+# Built files
+*.iml
+.gradle/
+/local.properties
+/.idea/
+/build/
+/captures
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# App build outputs
+/app/build/
+/core/*/build/
+/feature/*/build/
+/build-logic/convention/build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# Keystore
+*.jks
+*.keystore
+
+# Local config
+local.properties

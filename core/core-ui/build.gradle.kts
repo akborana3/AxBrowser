@@ -1,0 +1,15 @@
+plugins {
+    id("axbrowser.android.library")
+    id("axbrowser.compose")
+}
+
+android {
+    namespace = "com.akay.core.ui"
+}
+
+dependencies {
+    implementation(libs.core.ktx)
+    implementation(libs.activity.compose)
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.viewmodel.compose)
+}
