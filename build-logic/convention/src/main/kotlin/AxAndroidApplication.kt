@@ -1,15 +1,16 @@
+import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.kotlin.dsl.dependencies
+import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.the
 
-abstract class AxAndroidApplication : Plugin<Project> {
+class AxAndroidApplication : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
             pluginManager.apply("com.android.application")
             pluginManager.apply("org.jetbrains.kotlin.android")
 
-            the<com.android.build.gradle.internal.dsl.BaseAppModuleExtension>().apply {
+            the<BaseAppModuleExtension>().apply {
                 compileSdk = 34
 
                 defaultConfig {

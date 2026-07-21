@@ -10,6 +10,23 @@ repositories {
     gradlePluginPortal()
 }
 
+gradlePlugin {
+    plugins {
+        register("axAndroidApplication") {
+            id = "axbrowser.android.application"
+            implementationClass = "AxAndroidApplication"
+        }
+        register("axAndroidLibrary") {
+            id = "axbrowser.android.library"
+            implementationClass = "AxAndroidLibrary"
+        }
+        register("axCompose") {
+            id = "axbrowser.compose"
+            implementationClass = "AxCompose"
+        }
+    }
+}
+
 dependencies {
     compileOnly("com.android.tools.build:gradle:8.2.2")
     compileOnly("org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.0")
