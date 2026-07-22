@@ -247,10 +247,9 @@ fun BrowserScreen(
                         )
 
                         webChromeClient = AxWebChromeClient(
-                            onProgressChanged = { viewModel.updateProgress(it) },
-                            onTitleChanged = { viewModel.updateTitle(it) },
-                            onFaviconChanged = {},
-                            onPermissionRequest = {}
+                            onProgressChange = { viewModel.updateProgress(it) },
+                            onTitleChange = { viewModel.updateTitle(it) },
+                            onUrlChange = { }
                         )
 
                         webView = this
