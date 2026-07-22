@@ -22,8 +22,6 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.coroutines.android)
-    implementation(libs.accompanist.webview)
-    implementation(libs.coil.compose)
 
     testImplementation(libs.junit5.api)
     testRuntimeOnly(libs.junit5.engine)

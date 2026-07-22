@@ -9,27 +9,20 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
@@ -53,7 +46,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
@@ -63,6 +55,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.akay.core.ui.components.AxProgressBar
 import com.akay.core.ui.theme.Primary
+import com.akay.feature.browser.devconsole.DevConsolePanel
+import com.akay.feature.browser.devconsole.NetworkInterceptor
+import com.akay.feature.browser.devconsole.NetworkRequest
 import com.akay.feature.browser.viewmodel.BrowserViewModel
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -136,6 +131,9 @@ fun BrowserScreen(
                         IconButton(onClick = { webView?.reload() }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                         }
+                        IconButton(onClick = { viewModel.toggleDevConsole() }) {
+                            Icon(Icons.Default.BugReport, contentDescription = "Dev Console")
+                        }
                         IconButton(onClick = {
                             isEditingUrl = !isEditingUrl
                         }) {
@@ -178,6 +176,18 @@ fun BrowserScreen(
                         )
 
                         webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
+                                request?.let {
+                                    val netReq = NetworkRequest(
+                                        url = it.url.toString(),
+                                        method = it.method ?: "GET",
+                                        requestHeaders = it.requestHeaders ?: emptyMap()
+                                    )
+                                    NetworkInterceptor.onRequest(netReq)
+                                }
+                                return super.shouldInterceptRequest(view, request)
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                                 url?.let { viewModel.updateUrl(it) }
                             }
@@ -185,6 +195,21 @@ fun BrowserScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 viewModel.updateProgress(100)
                                 view?.title?.let { viewModel.updateTitle(it) }
+
+                                val js = view?.context?.assets?.open("js/media_scanner.js")?.bufferedReader()?.readText()
+                                js?.let {
+                                    view.evaluateJavascript(it) { result ->
+                                        if (!result.isNullOrEmpty() && result != "null") {
+                                            try {
+                                                val cleaned = result.removeSurrounding("\"")
+                                                    .replace("\\\"", "\"")
+                                                    .replace("\\n", "\n")
+                                                val count = cleaned.split("\"url\"").size - 1
+                                                viewModel.updateDetectedMediaCount(count.coerceAtLeast(0))
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
                             }
 
                             override fun onReceivedError(
@@ -220,7 +245,6 @@ fun BrowserScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Tab Switcher Overlay
             AnimatedVisibility(
                 visible = uiState.showTabSwitcher,
                 enter = slideInVertically() + fadeIn(),
@@ -236,7 +260,6 @@ fun BrowserScreen(
                 )
             }
 
-            // Floating New Tab Button
             if (!uiState.showTabSwitcher) {
                 FloatingActionButton(
                     onClick = { viewModel.createNewTab() },
@@ -255,5 +278,12 @@ fun BrowserScreen(
                 }
             }
         }
+
+        DevConsolePanel(
+            isVisible = uiState.devConsoleVisible,
+            currentPageUrl = uiState.displayUrl,
+            currentPageHtml = uiState.pageHtml,
+            onDismiss = { viewModel.toggleDevConsole() }
+        )
     }
 }

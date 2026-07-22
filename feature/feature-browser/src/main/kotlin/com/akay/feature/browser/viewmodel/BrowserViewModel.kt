@@ -22,7 +22,10 @@ data class BrowserUiState(
     val isIncognito: Boolean = false,
     val error: String? = null,
     val showTabSwitcher: Boolean = false,
-    val showDownloadSheet: Boolean = false
+    val showDownloadSheet: Boolean = false,
+    val devConsoleVisible: Boolean = false,
+    val pageHtml: String = "",
+    val detectedMediaCount: Int = 0
 )
 
 sealed class BrowserUiEvent {
@@ -120,6 +123,18 @@ class BrowserViewModel @Inject constructor(
 
     fun toggleTabSwitcher() {
         _uiState.value = _uiState.value.copy(showTabSwitcher = !_uiState.value.showTabSwitcher)
+    }
+
+    fun toggleDevConsole() {
+        _uiState.value = _uiState.value.copy(devConsoleVisible = !_uiState.value.devConsoleVisible)
+    }
+
+    fun updatePageHtml(html: String) {
+        _uiState.value = _uiState.value.copy(pageHtml = html)
+    }
+
+    fun updateDetectedMediaCount(count: Int) {
+        _uiState.value = _uiState.value.copy(detectedMediaCount = count)
     }
 
     fun closeTab(tabId: String) {
