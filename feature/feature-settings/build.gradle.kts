@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":core:core-ui"))
     implementation(project(":core:core-domain"))
     implementation(project(":core:core-data"))
+    implementation(project(":feature:feature-downloads"))
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
