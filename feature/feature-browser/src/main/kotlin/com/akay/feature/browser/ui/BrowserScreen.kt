@@ -11,8 +11,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -24,10 +26,12 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +63,8 @@ import com.akay.feature.browser.devconsole.DevConsolePanel
 import com.akay.feature.browser.devconsole.NetworkInterceptor
 import com.akay.feature.browser.devconsole.NetworkRequest
 import com.akay.feature.browser.viewmodel.BrowserViewModel
+import com.akay.feature.downloads.ui.DetectedMediaUi
+import com.akay.feature.downloads.ui.MediaBottomSheet
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +77,8 @@ fun BrowserScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var lastNavigatedUrl by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
+    var showMediaSheet by remember { mutableStateOf(false) }
+    var detectedMedia by remember { mutableStateOf<List<DetectedMediaUi>>(emptyList()) }
 
     Scaffold(
         topBar = {
@@ -204,8 +212,13 @@ fun BrowserScreen(
                                                 val cleaned = result.removeSurrounding("\"")
                                                     .replace("\\\"", "\"")
                                                     .replace("\\n", "\n")
-                                                val count = cleaned.split("\"url\"").size - 1
-                                                viewModel.updateDetectedMediaCount(count.coerceAtLeast(0))
+                                                    .replace("\\u003C", "<")
+                                                    .replace("\\/", "/")
+                                                val mediaItems = parseMediaJson(cleaned)
+                                                if (mediaItems.isNotEmpty()) {
+                                                    detectedMedia = mediaItems
+                                                    viewModel.updateDetectedMediaCount(mediaItems.size)
+                                                }
                                             } catch (_: Exception) {}
                                         }
                                     }
@@ -245,6 +258,7 @@ fun BrowserScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Tab Switcher Overlay
             AnimatedVisibility(
                 visible = uiState.showTabSwitcher,
                 enter = slideInVertically() + fadeIn(),
@@ -260,30 +274,111 @@ fun BrowserScreen(
                 )
             }
 
+            // Floating Buttons (only when tab switcher is hidden)
             if (!uiState.showTabSwitcher) {
-                FloatingActionButton(
-                    onClick = { viewModel.createNewTab() },
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(16.dp)
-                        .size(48.dp),
-                    containerColor = Primary,
-                    shape = CircleShape
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.End
                 ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "New Tab",
-                        tint = Color.White
-                    )
+                    // Floating Download Button - appears when media is detected
+                    AnimatedVisibility(
+                        visible = uiState.detectedMediaCount > 0,
+                        enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+                    ) {
+                        ExtendedFloatingActionButton(
+                            onClick = { showMediaSheet = true },
+                            containerColor = Primary,
+                            contentColor = Color.White,
+                            icon = { Icon(Icons.Default.Download, contentDescription = null) },
+                            text = {
+                                Text(
+                                    text = if (uiState.detectedMediaCount == 1) "1 media" else "${uiState.detectedMediaCount} media"
+                                )
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // New Tab FAB
+                    FloatingActionButton(
+                        onClick = { viewModel.createNewTab() },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "New Tab",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
 
+        // Dev Console Panel
         DevConsolePanel(
             isVisible = uiState.devConsoleVisible,
             currentPageUrl = uiState.displayUrl,
             currentPageHtml = uiState.pageHtml,
             onDismiss = { viewModel.toggleDevConsole() }
         )
+
+        // Media Bottom Sheet
+        if (showMediaSheet && detectedMedia.isNotEmpty()) {
+            MediaBottomSheet(
+                detectedUrls = detectedMedia,
+                onDownloadDirect = { url, filename ->
+                    viewModel.updateDetectedMediaCount(0)
+                    showMediaSheet = false
+                },
+                onDownloadWithYtDlp = { url ->
+                    viewModel.updateDetectedMediaCount(0)
+                    showMediaSheet = false
+                },
+                onDismiss = { showMediaSheet = false }
+            )
+        }
     }
+}
+
+private fun parseMediaJson(json: String): List<DetectedMediaUi> {
+    val items = mutableListOf<DetectedMediaUi>()
+    try {
+        val cleaned = json.trim()
+        if (!cleaned.startsWith("[")) return emptyList()
+
+        var i = 0
+        while (i < cleaned.length) {
+            val urlStart = cleaned.indexOf("\"url\"", i)
+            if (urlStart == -1) break
+            val urlColon = cleaned.indexOf(":", urlStart)
+            val urlQuote1 = cleaned.indexOf("\"", urlColon + 1)
+            val urlQuote2 = cleaned.indexOf("\"", urlQuote1 + 1)
+            val url = cleaned.substring(urlQuote1 + 1, urlQuote2)
+
+            val typeStart = cleaned.indexOf("\"type\"", urlQuote2)
+            val typeColon = cleaned.indexOf(":", typeStart)
+            val typeQuote1 = cleaned.indexOf("\"", typeColon + 1)
+            val typeQuote2 = cleaned.indexOf("\"", typeQuote1 + 1)
+            val type = cleaned.substring(typeQuote1 + 1, typeQuote2)
+
+            val isVideo = type == "video" || type == "source"
+            val filename = url.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}" }
+
+            items.add(DetectedMediaUi(
+                id = "${url}_${System.currentTimeMillis()}",
+                url = url,
+                filename = filename,
+                mimeType = null,
+                isVideo = isVideo
+            ))
+
+            i = typeQuote2 + 1
+        }
+    } catch (_: Exception) {}
+    return items
 }
