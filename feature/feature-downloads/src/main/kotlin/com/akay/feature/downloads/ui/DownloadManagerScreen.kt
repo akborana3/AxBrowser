@@ -62,6 +62,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.akay.feature.downloads.viewmodel.DownloadItem
 import com.akay.feature.downloads.viewmodel.DownloadViewModel
 import com.akay.feature.downloads.viewmodel.ItemStatus
+import androidx.compose.foundation.layout.PaddingValues
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable

@@ -42,13 +42,15 @@ class YtDlpEngine(private val context: Context) {
             .start()
 
         try {
-            process.inputStream.bufferedReader().forEachLine { line ->
-                if (!coroutineContext.isActive) {
-                    process.destroy()
-                    return@forEachLine
+            process.inputStream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    if (!coroutineContext.isActive) {
+                        process.destroy()
+                        return@useLines
+                    }
+                    val progress = parseProgressLine(line)
+                    if (progress != null) emit(progress)
                 }
-                val progress = parseProgressLine(line)
-                if (progress != null) emit(progress)
             }
             val exitCode = process.waitFor()
             if (exitCode == 0) {
