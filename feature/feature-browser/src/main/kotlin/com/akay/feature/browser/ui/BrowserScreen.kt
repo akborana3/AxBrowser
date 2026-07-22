@@ -9,15 +9,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -27,9 +31,11 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
@@ -39,7 +45,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -78,7 +86,11 @@ fun BrowserScreen(
     var lastNavigatedUrl by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
     var showMediaSheet by remember { mutableStateOf(false) }
-    var detectedMedia by remember { mutableStateOf<List<DetectedMediaUi>>(emptyList()) }
+    var showPasteLinkDialog by remember { mutableStateOf(false) }
+    var pasteUrl by remember { mutableStateOf("") }
+
+    val networkMedia by NetworkInterceptor.detectedMedia.collectAsState()
+    val mediaCount = uiState.detectedMediaCount + networkMedia.size
 
     Scaffold(
         topBar = {
@@ -142,9 +154,7 @@ fun BrowserScreen(
                         IconButton(onClick = { viewModel.toggleDevConsole() }) {
                             Icon(Icons.Default.BugReport, contentDescription = "Dev Console")
                         }
-                        IconButton(onClick = {
-                            isEditingUrl = !isEditingUrl
-                        }) {
+                        IconButton(onClick = { isEditingUrl = !isEditingUrl }) {
                             Icon(
                                 if (isEditingUrl) Icons.Default.Close else Icons.Default.Search,
                                 contentDescription = if (isEditingUrl) "Close" else "Search"
@@ -178,16 +188,14 @@ fun BrowserScreen(
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
                         setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
-                        settings.userAgentString = settings.userAgentString.replace(
-                            "Mobile",
-                            "Desktop"
-                        )
+                        settings.userAgentString = settings.userAgentString.replace("Mobile", "Desktop")
 
                         webViewClient = object : WebViewClient() {
                             override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
                                 request?.let {
+                                    val url = it.url.toString()
                                     val netReq = NetworkRequest(
-                                        url = it.url.toString(),
+                                        url = url,
                                         method = it.method ?: "GET",
                                         requestHeaders = it.requestHeaders ?: emptyMap()
                                     )
@@ -216,7 +224,6 @@ fun BrowserScreen(
                                                     .replace("\\/", "/")
                                                 val mediaItems = parseMediaJson(cleaned)
                                                 if (mediaItems.isNotEmpty()) {
-                                                    detectedMedia = mediaItems
                                                     viewModel.updateDetectedMediaCount(mediaItems.size)
                                                 }
                                             } catch (_: Exception) {}
@@ -225,12 +232,7 @@ fun BrowserScreen(
                                 }
                             }
 
-                            override fun onReceivedError(
-                                view: WebView?,
-                                errorCode: Int,
-                                description: String?,
-                                failingUrl: String?
-                            ) {
+                            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                                 viewModel.updateTitle("Error")
                             }
                         }
@@ -239,7 +241,6 @@ fun BrowserScreen(
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 viewModel.updateProgress(newProgress)
                             }
-
                             override fun onReceivedTitle(view: WebView?, title: String?) {
                                 title?.let { viewModel.updateTitle(it) }
                             }
@@ -258,7 +259,6 @@ fun BrowserScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Tab Switcher Overlay
             AnimatedVisibility(
                 visible = uiState.showTabSwitcher,
                 enter = slideInVertically() + fadeIn(),
@@ -274,7 +274,6 @@ fun BrowserScreen(
                 )
             }
 
-            // Floating Buttons (only when tab switcher is hidden)
             if (!uiState.showTabSwitcher) {
                 Column(
                     modifier = Modifier
@@ -282,9 +281,9 @@ fun BrowserScreen(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.End
                 ) {
-                    // Floating Download Button - appears when media is detected
+                    // Floating Download Button
                     AnimatedVisibility(
-                        visible = uiState.detectedMediaCount > 0,
+                        visible = mediaCount > 0,
                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
                         exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
                     ) {
@@ -295,13 +294,24 @@ fun BrowserScreen(
                             icon = { Icon(Icons.Default.Download, contentDescription = null) },
                             text = {
                                 Text(
-                                    text = if (uiState.detectedMediaCount == 1) "1 media" else "${uiState.detectedMediaCount} media"
+                                    text = if (mediaCount == 1) "1 media" else "$mediaCount media"
                                 )
                             }
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Paste Link Button
+                    SmallFloatingActionButton(
+                        onClick = { showPasteLinkDialog = true },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Default.Link, contentDescription = "Paste Link", tint = MaterialTheme.colorScheme.primary)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
 
                     // New Tab FAB
                     FloatingActionButton(
@@ -309,17 +319,12 @@ fun BrowserScreen(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
                         shape = CircleShape
                     ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = "New Tab",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
+                        Icon(Icons.Default.Add, contentDescription = "New Tab", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
         }
 
-        // Dev Console Panel
         DevConsolePanel(
             isVisible = uiState.devConsoleVisible,
             currentPageUrl = uiState.displayUrl,
@@ -327,22 +332,86 @@ fun BrowserScreen(
             onDismiss = { viewModel.toggleDevConsole() }
         )
 
-        // Media Bottom Sheet
-        if (showMediaSheet && detectedMedia.isNotEmpty()) {
-            MediaBottomSheet(
-                detectedUrls = detectedMedia,
-                onDownloadDirect = { url, filename ->
-                    viewModel.updateDetectedMediaCount(0)
-                    showMediaSheet = false
+        if (showMediaSheet) {
+            val allMedia = networkMedia.map {
+                DetectedMediaUi(it.id, it.url, it.filename, it.mimeType, it.isVideo)
+            }
+            if (allMedia.isNotEmpty()) {
+                MediaBottomSheet(
+                    detectedUrls = allMedia,
+                    onDownloadDirect = { url, filename -> showMediaSheet = false },
+                    onDownloadWithYtDlp = { url -> showMediaSheet = false },
+                    onDismiss = { showMediaSheet = false }
+                )
+            }
+        }
+
+        if (showPasteLinkDialog) {
+            PasteLinkDialog(
+                url = pasteUrl,
+                onUrlChange = { pasteUrl = it },
+                onConfirm = {
+                    showPasteLinkDialog = false
+                    if (pasteUrl.isNotBlank()) {
+                        viewModel.navigateToUrl(pasteUrl)
+                        pasteUrl = ""
+                    }
                 },
-                onDownloadWithYtDlp = { url ->
-                    viewModel.updateDetectedMediaCount(0)
-                    showMediaSheet = false
-                },
-                onDismiss = { showMediaSheet = false }
+                onDismiss = { showPasteLinkDialog = false }
             )
         }
     }
+}
+
+@Composable
+fun PasteLinkDialog(
+    url: String,
+    onUrlChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Link, contentDescription = null) },
+        title = { Text("Paste Link to Download") },
+        text = {
+            Column {
+                Text(
+                    "Paste a video or file URL to download directly or via yt-dlp.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = onUrlChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("https://...") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = url.isNotBlank()
+            ) {
+                Text("Open")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 private fun parseMediaJson(json: String): List<DetectedMediaUi> {
@@ -361,6 +430,7 @@ private fun parseMediaJson(json: String): List<DetectedMediaUi> {
             val url = cleaned.substring(urlQuote1 + 1, urlQuote2)
 
             val typeStart = cleaned.indexOf("\"type\"", urlQuote2)
+            if (typeStart == -1) break
             val typeColon = cleaned.indexOf(":", typeStart)
             val typeQuote1 = cleaned.indexOf("\"", typeColon + 1)
             val typeQuote2 = cleaned.indexOf("\"", typeQuote1 + 1)
