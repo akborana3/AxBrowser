@@ -3,11 +3,11 @@ package com.akay.feature.downloads.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.akay.core.domain.engine.DirectDownloadEngine
-import com.akay.core.domain.engine.DirectDownloadProgress
-import com.akay.core.domain.engine.YtDlpEngine
-import com.akay.core.domain.engine.YtDlpProgress
-import com.akay.core.domain.engine.YtDlpSetup
+import com.akay.feature.downloads.engine.DirectDownloadEngine
+import com.akay.feature.downloads.engine.DirectDownloadProgress
+import com.akay.feature.downloads.engine.YtDlpEngine
+import com.akay.feature.downloads.engine.YtDlpProgress
+import com.akay.feature.downloads.engine.YtDlpSetup
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
