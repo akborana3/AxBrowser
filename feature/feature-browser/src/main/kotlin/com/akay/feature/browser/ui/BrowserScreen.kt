@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -53,7 +55,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -70,6 +74,8 @@ fun BrowserScreen(
     val uiState by viewModel.uiState.collectAsState()
     var isEditingUrl by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var lastNavigatedUrl by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     Scaffold(
         topBar = {
@@ -78,13 +84,22 @@ fun BrowserScreen(
                     title = {
                         if (isEditingUrl) {
                             OutlinedTextField(
-                                value = uiState.url,
+                                value = uiState.displayUrl,
                                 onValueChange = { viewModel.updateUrl(it) },
                                 modifier = Modifier.fillMaxWidth(),
                                 placeholder = { Text("Search or enter URL") },
                                 singleLine = true,
                                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                                     fontFamily = FontFamily.Monospace
+                                ),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                                keyboardActions = KeyboardActions(
+                                    onGo = {
+                                        viewModel.navigateToUrl(uiState.displayUrl)
+                                        lastNavigatedUrl = uiState.displayUrl
+                                        isEditingUrl = false
+                                        keyboardController?.hide()
+                                    }
                                 ),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Primary,
@@ -99,7 +114,7 @@ fun BrowserScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = uiState.url,
+                                    text = uiState.displayUrl,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1
@@ -198,7 +213,8 @@ fun BrowserScreen(
                     }
                 },
                 update = { webView ->
-                    if (uiState.url != webView.url) {
+                    if (uiState.url.isNotEmpty() && uiState.url != lastNavigatedUrl) {
+                        lastNavigatedUrl = uiState.url
                         webView.loadUrl(uiState.url)
                     }
                 },

@@ -16,6 +16,7 @@ data class BrowserUiState(
     val activeTab: Tab? = null,
     val isLoading: Boolean = false,
     val url: String = "",
+    val displayUrl: String = "",
     val title: String = "",
     val progress: Int = 0,
     val isIncognito: Boolean = false,
@@ -77,6 +78,7 @@ class BrowserViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 activeTab = tab,
                 url = tab.url,
+                displayUrl = tab.url,
                 title = tab.title,
                 showTabSwitcher = false
             )
@@ -84,14 +86,14 @@ class BrowserViewModel @Inject constructor(
     }
 
     fun updateUrl(url: String) {
-        _uiState.value = _uiState.value.copy(url = url)
+        _uiState.value = _uiState.value.copy(displayUrl = url)
     }
 
     fun updateTitle(title: String) {
         _uiState.value = _uiState.value.copy(title = title)
         viewModelScope.launch {
             _uiState.value.activeTab?.let { tab ->
-                tabRepository.updateTab(tab.copy(title = title, lastAccessed = System.currentTimeMillis()))
+                tabRepository.updateTab(tab.copy(url = _uiState.value.displayUrl, title = title, lastAccessed = System.currentTimeMillis()))
             }
         }
     }
@@ -108,7 +110,7 @@ class BrowserViewModel @Inject constructor(
             }
             else -> url
         }
-        _uiState.value = _uiState.value.copy(url = processedUrl)
+        _uiState.value = _uiState.value.copy(url = processedUrl, displayUrl = processedUrl)
         viewModelScope.launch {
             _uiState.value.activeTab?.let { tab ->
                 tabRepository.updateTab(tab.copy(url = processedUrl, lastAccessed = System.currentTimeMillis()))
