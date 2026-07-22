@@ -14,6 +14,11 @@ dependencies {
     implementation(project(":core:core-domain"))
     implementation(project(":core:core-data"))
     implementation(project(":feature:feature-downloads"))
+    implementation(project(":feature:feature-bookmarks"))
+    implementation(project(":feature:feature-history"))
+    implementation(project(":feature:feature-settings"))
+    implementation(project(":feature:feature-filemanager"))
+    implementation(project(":feature:feature-videoplayer"))
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
