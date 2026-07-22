@@ -96,7 +96,6 @@ fun BrowserScreen(
                                 keyboardActions = KeyboardActions(
                                     onGo = {
                                         viewModel.navigateToUrl(uiState.displayUrl)
-                                        lastNavigatedUrl = uiState.displayUrl
                                         isEditingUrl = false
                                         keyboardController?.hide()
                                     }
