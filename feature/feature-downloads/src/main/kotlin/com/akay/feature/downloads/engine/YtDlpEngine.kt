@@ -25,7 +25,7 @@ class YtDlpEngine(private val context: Context) {
         url: String,
         outputPath: String,
         formatId: String? = null
-    ): Flow<YtDlpProgress> = flow {
+    ): Flow<DownloadProgressUnified> = flow {
         val binary = YtDlpSetup.getBinaryFile(context).absolutePath
         val cmd = mutableListOf(
             binary,
@@ -54,22 +54,22 @@ class YtDlpEngine(private val context: Context) {
             }
             val exitCode = process.waitFor()
             if (exitCode == 0) {
-                emit(YtDlpProgress.Completed)
+                emit(DownloadProgressUnified.Completed)
             } else {
-                emit(YtDlpProgress.Failed("yt-dlp exited with code $exitCode"))
+                emit(DownloadProgressUnified.Failed("yt-dlp exited with code $exitCode"))
             }
         } finally {
             process.destroyForcibly()
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun parseProgressLine(line: String): YtDlpProgress? {
+    private fun parseProgressLine(line: String): DownloadProgressUnified? {
         val regex = Regex("""\[download\]\s+([\d.]+)%\s+of\s+([\d.]+\w+)\s+at\s+([\d.]+\w+/s)""")
         val match = regex.find(line) ?: return null
         val percent = match.groupValues[1].toFloatOrNull() ?: return null
         val totalStr = match.groupValues[2]
         val speedStr = match.groupValues[3]
-        return YtDlpProgress.Running(
+        return DownloadProgressUnified.Running(
             percent = percent,
             totalBytesStr = totalStr,
             speedStr = speedStr

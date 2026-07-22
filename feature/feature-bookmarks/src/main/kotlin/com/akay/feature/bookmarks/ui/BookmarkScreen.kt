@@ -13,9 +13,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,7 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.akay.core.domain.model.Bookmark
+import com.akay.core.ui.theme.Glass
+import com.akay.core.ui.theme.GlassStroke
 import com.akay.core.ui.theme.Primary
 import com.akay.feature.bookmarks.viewmodel.BookmarkViewModel
 
@@ -40,14 +45,19 @@ import com.akay.feature.bookmarks.viewmodel.BookmarkViewModel
 @Composable
 fun BookmarkScreen(
     viewModel: BookmarkViewModel = hiltViewModel(),
-    onBookmarkClick: (String) -> Unit = {}
+    onBookmarkClick: (String) -> Unit = {},
+    onBack: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Bookmarks") }
+                title = { Text("Bookmarks") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { paddingValues ->
@@ -74,11 +84,18 @@ fun BookmarkScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(uiState.bookmarks) { bookmark ->
-                    BookmarkItem(
-                        bookmark = bookmark,
-                        onClick = { onBookmarkClick(bookmark.url) },
-                        onDelete = { viewModel.deleteBookmark(bookmark.id) }
-                    )
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Glass),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, GlassStroke),
+                        shape = MaterialTheme.shapes.large
+                    ) {
+                        BookmarkItem(
+                            bookmark = bookmark,
+                            onClick = { onBookmarkClick(bookmark.url) },
+                            onDelete = { viewModel.deleteBookmark(bookmark.id) }
+                        )
+                    }
                 }
             }
         }
@@ -87,7 +104,7 @@ fun BookmarkScreen(
 
 @Composable
 fun BookmarkItem(
-    bookmark: Bookmark,
+    bookmark: com.akay.core.domain.model.Bookmark,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -127,11 +144,7 @@ fun BookmarkItem(
             }
         }
         IconButton(onClick = onDelete) {
-            Icon(
-                Icons.Default.Delete,
-                contentDescription = "Delete",
-                tint = MaterialTheme.colorScheme.error
-            )
+            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
         }
     }
 }

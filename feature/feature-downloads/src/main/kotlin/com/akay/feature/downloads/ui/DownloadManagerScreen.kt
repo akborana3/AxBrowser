@@ -1,10 +1,6 @@
 package com.akay.feature.downloads.ui
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,30 +12,30 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
@@ -47,22 +43,27 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.akay.core.ui.theme.Glass
+import com.akay.core.ui.theme.GlassStroke
 import com.akay.feature.downloads.viewmodel.DownloadItem
 import com.akay.feature.downloads.viewmodel.DownloadViewModel
 import com.akay.feature.downloads.viewmodel.ItemStatus
-import androidx.compose.foundation.layout.PaddingValues
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -72,6 +73,8 @@ fun DownloadManagerScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val pagerState = rememberPagerState(pageCount = { 3 })
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
     val tabs = listOf("Active (${state.active.size})", "Completed", "Failed")
 
     Scaffold(
@@ -80,7 +83,10 @@ fun DownloadManagerScreen(
                 title = { Text("Downloads", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
             )
         }
     ) { padding ->
@@ -97,7 +103,7 @@ fun DownloadManagerScreen(
                 tabs.forEachIndexed { index, title ->
                     Tab(
                         selected = pagerState.currentPage == index,
-                        onClick = { },
+                        onClick = { coroutineScope.launch { pagerState.animateScrollToPage(index) } },
                         text = { Text(title, fontWeight = FontWeight.SemiBold) }
                     )
                 }
@@ -114,7 +120,7 @@ fun DownloadManagerScreen(
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(list, key = { it.id }) { item ->
@@ -124,7 +130,9 @@ fun DownloadManagerScreen(
                                 onResume = { viewModel.resume(it) },
                                 onCancel = { viewModel.cancel(it) },
                                 onRetry = { viewModel.retry(it) },
-                                onDelete = { viewModel.delete(it) }
+                                onDelete = { viewModel.delete(it) },
+                                onOpen = { viewModel.openFile(it, context) },
+                                onShare = { viewModel.shareFile(it, context) }
                             )
                         }
                     }
@@ -141,11 +149,14 @@ fun DownloadCard(
     onResume: (String) -> Unit,
     onCancel: (String) -> Unit,
     onRetry: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    onOpen: (String) -> Unit,
+    onShare: (String) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        colors = CardDefaults.cardColors(containerColor = Glass),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GlassStroke),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         shape = MaterialTheme.shapes.large
     ) {
@@ -223,6 +234,8 @@ fun DownloadCard(
                         IconButton(onClick = { onDelete(item.id) }) { Icon(Icons.Default.Delete, "Delete") }
                     }
                     ItemStatus.COMPLETED -> {
+                        IconButton(onClick = { onOpen(item.id) }) { Icon(Icons.Default.OpenInNew, "Open") }
+                        IconButton(onClick = { onShare(item.id) }) { Icon(Icons.Default.Share, "Share") }
                         IconButton(onClick = { onDelete(item.id) }) { Icon(Icons.Default.Delete, "Delete") }
                     }
                     else -> {}
@@ -249,12 +262,12 @@ fun YtDlpSetupBanner(progress: Int) {
 @Composable
 fun StatusBadge(status: ItemStatus) {
     val (color, label) = when (status) {
-        ItemStatus.RUNNING -> Pair(Color(0xFF6C63FF), "DL")
-        ItemStatus.PAUSED -> Pair(Color(0xFFFF9800), "||")
-        ItemStatus.COMPLETED -> Pair(Color(0xFF4CAF50), "OK")
-        ItemStatus.FAILED -> Pair(Color(0xFFFF5252), "!")
-        ItemStatus.QUEUED -> Pair(Color(0xFF9E9E9E), "...")
-        ItemStatus.CANCELLED -> Pair(Color(0xFF757575), "X")
+        ItemStatus.RUNNING -> Pair(Color(0xFF6C63FF), "Downloading")
+        ItemStatus.PAUSED -> Pair(Color(0xFFFF9800), "Paused")
+        ItemStatus.COMPLETED -> Pair(Color(0xFF4CAF50), "Done")
+        ItemStatus.FAILED -> Pair(Color(0xFFFF5252), "Failed")
+        ItemStatus.QUEUED -> Pair(Color(0xFF9E9E9E), "Queued")
+        ItemStatus.CANCELLED -> Pair(Color(0xFF757575), "Cancelled")
     }
     Surface(
         color = color.copy(alpha = 0.15f),

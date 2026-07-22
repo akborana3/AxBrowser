@@ -1,24 +1,117 @@
 package com.akay.feature.browser.ui
 
-import androidx.compose.runtime.Composable
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import android.net.Uri
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.navigation.*
+import androidx.navigation.compose.*
+import com.akay.feature.bookmarks.ui.BookmarkScreen
 import com.akay.feature.downloads.ui.DownloadManagerScreen
+import com.akay.feature.filemanager.ui.FileManagerScreen
+import com.akay.feature.history.ui.HistoryScreen
+import com.akay.feature.settings.ui.SettingsScreen
+import com.akay.feature.videoplayer.ui.VideoPlayerScreen
+
+private sealed class NavRoute(val route: String, val label: String, val icon: ImageVector) {
+    object Browser   : NavRoute("browser",   "Browser",   Icons.Default.Language)
+    object Downloads : NavRoute("downloads", "Downloads", Icons.Default.Download)
+    object Bookmarks : NavRoute("bookmarks", "Bookmarks", Icons.Default.Bookmark)
+    object History   : NavRoute("history",   "History",   Icons.Default.History)
+    object Settings  : NavRoute("settings",  "Settings",  Icons.Default.Settings)
+}
+
+private val bottomNavItems = listOf(
+    NavRoute.Browser,
+    NavRoute.Downloads,
+    NavRoute.Bookmarks,
+    NavRoute.History,
+    NavRoute.Settings
+)
 
 @Composable
 fun BrowserNavHost() {
     val navController = rememberNavController()
+    val currentBackStack by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStack?.destination?.route
 
-    NavHost(
-        navController = navController,
-        startDestination = "browser"
-    ) {
-        composable("browser") {
-            BrowserScreen()
+    val showBottomBar = bottomNavItems.any { it.route == currentRoute }
+
+    Scaffold(
+        bottomBar = {
+            if (showBottomBar) {
+                NavigationBar {
+                    bottomNavItems.forEach { item ->
+                        NavigationBarItem(
+                            selected = currentRoute == item.route,
+                            onClick = {
+                                navController.navigate(item.route) {
+                                    popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(item.icon, contentDescription = item.label) },
+                            label = { Text(item.label) }
+                        )
+                    }
+                }
+            }
         }
-        composable("downloads") {
-            DownloadManagerScreen(onBack = { navController.popBackStack() })
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = NavRoute.Browser.route,
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable(NavRoute.Browser.route) {
+                BrowserScreen()
+            }
+            composable(NavRoute.Downloads.route) {
+                DownloadManagerScreen(onBack = { navController.popBackStack() })
+            }
+            composable(NavRoute.Bookmarks.route) {
+                BookmarkScreen(
+                    onBookmarkClick = { url ->
+                        navController.navigate(NavRoute.Browser.route)
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(NavRoute.History.route) {
+                HistoryScreen(
+                    onHistoryClick = { url ->
+                        navController.navigate(NavRoute.Browser.route)
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+            composable(NavRoute.Settings.route) {
+                SettingsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = "videoplayer?url={url}&title={title}",
+                arguments = listOf(
+                    navArgument("url") { type = NavType.StringType },
+                    navArgument("title") { type = NavType.StringType; defaultValue = "" }
+                )
+            ) { backStackEntry ->
+                val url = backStackEntry.arguments?.getString("url") ?: ""
+                val title = backStackEntry.arguments?.getString("title") ?: ""
+                VideoPlayerScreen(videoUrl = url, title = title, onBack = { navController.popBackStack() })
+            }
+            composable("filemanager") {
+                FileManagerScreen(
+                    onFileClick = { path ->
+                        val encoded = Uri.encode(path)
+                        navController.navigate("videoplayer?url=file://$encoded")
+                    }
+                )
+            }
         }
     }
 }

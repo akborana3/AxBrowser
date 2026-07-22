@@ -3,12 +3,12 @@ package com.akay.feature.browser.ui
 import android.annotation.SuppressLint
 import android.view.ViewGroup
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -32,6 +31,8 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -61,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -69,16 +71,19 @@ import com.akay.core.ui.components.AxProgressBar
 import com.akay.core.ui.theme.Primary
 import com.akay.feature.browser.devconsole.DevConsolePanel
 import com.akay.feature.browser.devconsole.NetworkInterceptor
-import com.akay.feature.browser.devconsole.NetworkRequest
 import com.akay.feature.browser.viewmodel.BrowserViewModel
+import com.akay.feature.browser.webview.AxWebChromeClient
+import com.akay.feature.browser.webview.AxWebViewClient
 import com.akay.feature.downloads.ui.DetectedMediaUi
 import com.akay.feature.downloads.ui.MediaBottomSheet
+import com.akay.feature.downloads.viewmodel.DownloadViewModel
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserScreen(
-    viewModel: BrowserViewModel = hiltViewModel()
+    viewModel: BrowserViewModel = hiltViewModel(),
+    downloadViewModel: DownloadViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var isEditingUrl by remember { mutableStateOf(false) }
@@ -90,6 +95,7 @@ fun BrowserScreen(
     var pasteUrl by remember { mutableStateOf("") }
 
     val networkMedia by NetworkInterceptor.detectedMedia.collectAsState()
+    val erudaEnabled by viewModel.erudaEnabled.collectAsState(initial = false)
     val mediaCount = uiState.detectedMediaCount + networkMedia.size
 
     Scaffold(
@@ -121,18 +127,31 @@ fun BrowserScreen(
                                 )
                             )
                         } else {
-                            Column {
-                                Text(
-                                    text = uiState.title.ifEmpty { "New Tab" },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1
+                            Column(modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                    shape = MaterialTheme.shapes.extraLarge
                                 )
-                                Text(
-                                    text = uiState.displayUrl,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = if (uiState.displayUrl.startsWith("https")) Icons.Default.Lock else Icons.Default.LockOpen,
+                                        contentDescription = null,
+                                        tint = if (uiState.displayUrl.startsWith("https"))
+                                            Color(0xFF4CAF50)
+                                        else MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = prettifyUrl(uiState.displayUrl),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     },
@@ -178,8 +197,8 @@ fun BrowserScreen(
                 .padding(paddingValues)
         ) {
             AndroidView(
-                factory = { context ->
-                    WebView(context).apply {
+                factory = { ctx ->
+                    WebView(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -187,73 +206,61 @@ fun BrowserScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.mediaPlaybackRequiresUserGesture = false
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.builtInZoomControls = true
+                        settings.displayZoomControls = false
                         setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
-                        settings.userAgentString = settings.userAgentString.replace("Mobile", "Desktop")
 
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
-                                request?.let {
-                                    val url = it.url.toString()
-                                    val netReq = NetworkRequest(
-                                        url = url,
-                                        method = it.method ?: "GET",
-                                        requestHeaders = it.requestHeaders ?: emptyMap()
-                                    )
-                                    NetworkInterceptor.onRequest(netReq)
-                                }
-                                return super.shouldInterceptRequest(view, request)
-                            }
-
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
-                                url?.let { viewModel.updateUrl(it) }
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
+                        webViewClient = AxWebViewClient(
+                            context = ctx,
+                            onPageStarted = { url -> viewModel.updateUrl(url) },
+                            onPageFinished = { url, title ->
                                 viewModel.updateProgress(100)
-                                view?.title?.let { viewModel.updateTitle(it) }
-
-                                val js = view?.context?.assets?.open("js/media_scanner.js")?.bufferedReader()?.readText()
-                                js?.let {
-                                    view.evaluateJavascript(it) { result ->
+                                title?.let { viewModel.updateTitle(it) }
+                                if (url.isNotBlank() && url != "about:blank") {
+                                    viewModel.recordHistory(url, title ?: url)
+                                }
+                                if (erudaEnabled) {
+                                    val js = runCatching {
+                                        ctx.assets.open("js/eruda_init.js").bufferedReader().readText()
+                                    }.getOrNull()
+                                    js?.let { evaluateJavascript(it, null) }
+                                }
+                                val scanJs = runCatching {
+                                    ctx.assets.open("js/media_scanner.js").bufferedReader().readText()
+                                }.getOrNull()
+                                scanJs?.let { script ->
+                                    evaluateJavascript(script) { result ->
                                         if (!result.isNullOrEmpty() && result != "null") {
-                                            try {
-                                                val cleaned = result.removeSurrounding("\"")
-                                                    .replace("\\\"", "\"")
-                                                    .replace("\\n", "\n")
-                                                    .replace("\\u003C", "<")
-                                                    .replace("\\/", "/")
-                                                val mediaItems = parseMediaJson(cleaned)
-                                                if (mediaItems.isNotEmpty()) {
-                                                    viewModel.updateDetectedMediaCount(mediaItems.size)
-                                                }
-                                            } catch (_: Exception) {}
+                                            parseAndReportDomMedia(result)
                                         }
                                     }
                                 }
+                            },
+                            onError = { viewModel.updateTitle("Error") },
+                            onMediaDetected = { url, mime ->
+                                NetworkInterceptor.onRequest(
+                                    com.akay.feature.browser.devconsole.NetworkRequest(url = url, mimeType = mime)
+                                )
                             }
+                        )
 
-                            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                                viewModel.updateTitle("Error")
-                            }
-                        }
-
-                        webChromeClient = object : android.webkit.WebChromeClient() {
-                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                                viewModel.updateProgress(newProgress)
-                            }
-                            override fun onReceivedTitle(view: WebView?, title: String?) {
-                                title?.let { viewModel.updateTitle(it) }
-                            }
-                        }
+                        webChromeClient = AxWebChromeClient(
+                            onProgressChanged = { viewModel.updateProgress(it) },
+                            onTitleChanged = { viewModel.updateTitle(it) },
+                            onFaviconChanged = {},
+                            onPermissionRequest = {}
+                        )
 
                         webView = this
                         loadUrl(uiState.url)
                     }
                 },
-                update = { webView ->
+                update = { wv ->
                     if (uiState.url.isNotEmpty() && uiState.url != lastNavigatedUrl) {
                         lastNavigatedUrl = uiState.url
-                        webView.loadUrl(uiState.url)
+                        wv.loadUrl(uiState.url)
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -281,7 +288,6 @@ fun BrowserScreen(
                         .padding(16.dp),
                     horizontalAlignment = Alignment.End
                 ) {
-                    // Floating Download Button
                     AnimatedVisibility(
                         visible = mediaCount > 0,
                         enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
@@ -293,16 +299,13 @@ fun BrowserScreen(
                             contentColor = Color.White,
                             icon = { Icon(Icons.Default.Download, contentDescription = null) },
                             text = {
-                                Text(
-                                    text = if (mediaCount == 1) "1 media" else "$mediaCount media"
-                                )
+                                Text(text = if (mediaCount == 1) "1 media" else "$mediaCount media")
                             }
                         )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Paste Link Button
                     SmallFloatingActionButton(
                         onClick = { showPasteLinkDialog = true },
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -313,7 +316,6 @@ fun BrowserScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // New Tab FAB
                     FloatingActionButton(
                         onClick = { viewModel.createNewTab() },
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -339,8 +341,16 @@ fun BrowserScreen(
             if (allMedia.isNotEmpty()) {
                 MediaBottomSheet(
                     detectedUrls = allMedia,
-                    onDownloadDirect = { url, filename -> showMediaSheet = false },
-                    onDownloadWithYtDlp = { url -> showMediaSheet = false },
+                    onDownloadDirect = { url, filename ->
+                        showMediaSheet = false
+                        downloadViewModel.enqueue(url = url, filename = filename, useYtDlp = false)
+                    },
+                    onDownloadWithYtDlp = { url ->
+                        showMediaSheet = false
+                        val fname = url.substringAfterLast("/").substringBefore("?")
+                            .ifBlank { "video_${System.currentTimeMillis()}.mp4" }
+                        downloadViewModel.enqueue(url = url, filename = fname, useYtDlp = true)
+                    },
                     onDismiss = { showMediaSheet = false }
                 )
             }
@@ -377,7 +387,7 @@ fun PasteLinkDialog(
         text = {
             Column {
                 Text(
-                    "Paste a video or file URL to download directly or via yt-dlp.",
+                    "Paste a video or file URL to download.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -399,56 +409,36 @@ fun PasteLinkDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = onConfirm,
-                enabled = url.isNotBlank()
-            ) {
-                Text("Open")
-            }
+            TextButton(onClick = onConfirm, enabled = url.isNotBlank()) { Text("Open") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
-private fun parseMediaJson(json: String): List<DetectedMediaUi> {
-    val items = mutableListOf<DetectedMediaUi>()
-    try {
-        val cleaned = json.trim()
-        if (!cleaned.startsWith("[")) return emptyList()
+private fun prettifyUrl(url: String): String =
+    url.removePrefix("https://").removePrefix("http://").removePrefix("www.")
+        .let { if (it.length > 45) it.take(42) + "..." else it }
 
+private fun parseAndReportDomMedia(json: String) {
+    try {
+        val cleaned = json.trim().removeSurrounding("\"")
+            .replace("\\\"", "\"").replace("\\n", "\n").replace("\\/", "/")
+            .replace("\\u003C", "<")
+        if (!cleaned.startsWith("[")) return
         var i = 0
         while (i < cleaned.length) {
-            val urlStart = cleaned.indexOf("\"url\"", i)
-            if (urlStart == -1) break
-            val urlColon = cleaned.indexOf(":", urlStart)
-            val urlQuote1 = cleaned.indexOf("\"", urlColon + 1)
-            val urlQuote2 = cleaned.indexOf("\"", urlQuote1 + 1)
-            val url = cleaned.substring(urlQuote1 + 1, urlQuote2)
-
-            val typeStart = cleaned.indexOf("\"type\"", urlQuote2)
-            if (typeStart == -1) break
-            val typeColon = cleaned.indexOf(":", typeStart)
-            val typeQuote1 = cleaned.indexOf("\"", typeColon + 1)
-            val typeQuote2 = cleaned.indexOf("\"", typeQuote1 + 1)
-            val type = cleaned.substring(typeQuote1 + 1, typeQuote2)
-
-            val isVideo = type == "video" || type == "source"
-            val filename = url.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}" }
-
-            items.add(DetectedMediaUi(
-                id = "${url}_${System.currentTimeMillis()}",
-                url = url,
-                filename = filename,
-                mimeType = null,
-                isVideo = isVideo
-            ))
-
-            i = typeQuote2 + 1
+            val urlStart = cleaned.indexOf("\"url\"", i).takeIf { it >= 0 } ?: break
+            val u1 = cleaned.indexOf("\"", cleaned.indexOf(":", urlStart) + 1) + 1
+            val u2 = cleaned.indexOf("\"", u1)
+            val url = cleaned.substring(u1, u2)
+            val typeStart = cleaned.indexOf("\"type\"", u2).takeIf { it >= 0 } ?: break
+            val t1 = cleaned.indexOf("\"", cleaned.indexOf(":", typeStart) + 1) + 1
+            val t2 = cleaned.indexOf("\"", t1)
+            val type = cleaned.substring(t1, t2)
+            if (url.startsWith("http")) NetworkInterceptor.addDomMedia(url, type)
+            i = t2 + 1
         }
     } catch (_: Exception) {}
-    return items
 }

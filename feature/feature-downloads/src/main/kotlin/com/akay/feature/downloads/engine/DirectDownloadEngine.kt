@@ -20,7 +20,7 @@ class DirectDownloadEngine(private val client: OkHttpClient) {
         url: String,
         destFile: File,
         extraHeaders: Map<String, String> = emptyMap()
-    ): Flow<DirectDownloadProgress> = flow {
+    ): Flow<DownloadProgressUnified> = flow {
         val resumeFrom = pausedOffsets.remove(downloadId) ?: 0L
         activeJobs[downloadId] = false
 
@@ -30,7 +30,7 @@ class DirectDownloadEngine(private val client: OkHttpClient) {
 
         val response = client.newCall(requestBuilder.build()).execute()
         val body = response.body ?: run {
-            emit(DirectDownloadProgress.Failed("Empty response")); return@flow
+            emit(DownloadProgressUnified.Failed("Empty response")); return@flow
         }
 
         val contentLength = body.contentLength()
@@ -50,7 +50,7 @@ class DirectDownloadEngine(private val client: OkHttpClient) {
                 while (input.read(buffer).also { bytes = it } != -1) {
                     if (activeJobs[downloadId] == true) {
                         raf.close()
-                        emit(DirectDownloadProgress.Failed("Cancelled")); return@flow
+                        emit(DownloadProgressUnified.Failed("Cancelled")); return@flow
                     }
                     raf.write(buffer, 0, bytes)
                     downloadedBytes += bytes
@@ -59,7 +59,7 @@ class DirectDownloadEngine(private val client: OkHttpClient) {
                     if (now - lastSpeedCheck >= 500) {
                         val speed = ((downloadedBytes - bytesAtLastCheck) * 1000L) / (now - lastSpeedCheck)
                         val percent = if (totalBytes > 0) (downloadedBytes * 100f) / totalBytes else 0f
-                        emit(DirectDownloadProgress.Running(
+                        emit(DownloadProgressUnified.Running(
                             percent = percent,
                             totalBytesStr = formatSize(totalBytes),
                             speedStr = "${formatSize(speed)}/s"
@@ -70,10 +70,10 @@ class DirectDownloadEngine(private val client: OkHttpClient) {
                 }
             }
             raf.close()
-            emit(DirectDownloadProgress.Completed)
+            emit(DownloadProgressUnified.Completed)
         } catch (e: Exception) {
             raf.close()
-            emit(DirectDownloadProgress.Failed(e.message ?: "Unknown error"))
+            emit(DownloadProgressUnified.Failed(e.message ?: "Unknown error"))
         } finally {
             activeJobs.remove(downloadId)
         }

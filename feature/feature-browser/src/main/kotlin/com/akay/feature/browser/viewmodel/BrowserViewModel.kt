@@ -2,13 +2,18 @@ package com.akay.feature.browser.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.akay.core.data.datastore.AxPreferences
+import com.akay.core.domain.model.HistoryItem
 import com.akay.core.domain.model.Tab
+import com.akay.core.domain.repository.HistoryRepository
 import com.akay.core.domain.repository.TabRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.util.UUID
 import javax.inject.Inject
 
 data class BrowserUiState(
@@ -36,7 +41,9 @@ sealed class BrowserUiEvent {
 
 @HiltViewModel
 class BrowserViewModel @Inject constructor(
-    private val tabRepository: TabRepository
+    private val tabRepository: TabRepository,
+    private val historyRepository: HistoryRepository,
+    private val preferences: AxPreferences
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BrowserUiState())
@@ -44,6 +51,8 @@ class BrowserViewModel @Inject constructor(
 
     private val _events = MutableStateFlow<BrowserUiEvent?>(null)
     val events: StateFlow<BrowserUiEvent?> = _events.asStateFlow()
+
+    val erudaEnabled = preferences.erudaEnabled
 
     init {
         loadTabs()
@@ -107,17 +116,29 @@ class BrowserViewModel @Inject constructor(
 
     fun navigateToUrl(url: String) {
         val processedUrl = when {
-            url.isBlank() -> "about:blank"
-            !url.startsWith("http://") && !url.startsWith("https://") && !url.startsWith("about:") -> {
-                "https://www.google.com/search?q=$url"
-            }
-            else -> url
+            url.isBlank() -> return
+            url.startsWith("http://") || url.startsWith("https://") || url.startsWith("about:") -> url
+            url.contains(".") && !url.contains(" ") -> "https://$url"
+            else -> "https://www.google.com/search?q=${URLEncoder.encode(url, "UTF-8")}"
         }
         _uiState.value = _uiState.value.copy(url = processedUrl, displayUrl = processedUrl)
         viewModelScope.launch {
             _uiState.value.activeTab?.let { tab ->
                 tabRepository.updateTab(tab.copy(url = processedUrl, lastAccessed = System.currentTimeMillis()))
             }
+        }
+    }
+
+    fun recordHistory(url: String, title: String) {
+        viewModelScope.launch {
+            historyRepository.addHistoryItem(
+                HistoryItem(
+                    id = UUID.randomUUID().toString(),
+                    url = url,
+                    title = title,
+                    lastVisited = System.currentTimeMillis()
+                )
+            )
         }
     }
 

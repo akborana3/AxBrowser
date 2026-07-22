@@ -1,12 +1,15 @@
 package com.akay.feature.downloads.viewmodel
 
 import android.app.Application
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.akay.feature.downloads.engine.DirectDownloadEngine
-import com.akay.feature.downloads.engine.DirectDownloadProgress
+import com.akay.feature.downloads.engine.DownloadProgressUnified
 import com.akay.feature.downloads.engine.YtDlpEngine
-import com.akay.feature.downloads.engine.YtDlpProgress
 import com.akay.feature.downloads.engine.YtDlpSetup
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -106,23 +109,27 @@ class DownloadViewModel @Inject constructor(
     private fun startDownload(item: DownloadItem) {
         val job = viewModelScope.launch {
             updateItem(item.id) { it.copy(status = ItemStatus.RUNNING) }
-            val flow = if (item.useYtDlp && _state.value.ytDlpReady) {
+            val flow: kotlinx.coroutines.flow.Flow<DownloadProgressUnified> = if (item.useYtDlp && _state.value.ytDlpReady) {
                 ytDlpEngine.download(item.url, item.outputPath, item.formatId)
             } else {
                 directEngine.download(item.id, item.url, File(item.outputPath))
             }
             flow.collect { progress ->
                 when (progress) {
-                    is YtDlpProgress.Running -> updateItem(item.id) {
-                        it.copy(progress = progress.percent, speedStr = progress.speedStr, totalStr = progress.totalBytesStr, status = ItemStatus.RUNNING)
+                    is DownloadProgressUnified.Running -> updateItem(item.id) {
+                        it.copy(
+                            progress = progress.percent,
+                            speedStr = progress.speedStr,
+                            totalStr = progress.totalBytesStr,
+                            status = ItemStatus.RUNNING
+                        )
                     }
-                    is YtDlpProgress.Completed -> updateItem(item.id) { it.copy(progress = 100f, status = ItemStatus.COMPLETED) }
-                    is YtDlpProgress.Failed -> updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = progress.reason) }
-                    is DirectDownloadProgress.Running -> updateItem(item.id) {
-                        it.copy(progress = progress.percent, speedStr = progress.speedStr, totalStr = progress.totalBytesStr, status = ItemStatus.RUNNING)
+                    DownloadProgressUnified.Completed -> updateItem(item.id) {
+                        it.copy(progress = 100f, status = ItemStatus.COMPLETED)
                     }
-                    is DirectDownloadProgress.Completed -> updateItem(item.id) { it.copy(progress = 100f, status = ItemStatus.COMPLETED) }
-                    is DirectDownloadProgress.Failed -> updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = progress.reason) }
+                    is DownloadProgressUnified.Failed -> updateItem(item.id) {
+                        it.copy(status = ItemStatus.FAILED, errorMsg = progress.reason)
+                    }
                 }
             }
         }
@@ -158,6 +165,48 @@ class DownloadViewModel @Inject constructor(
         File(item.outputPath).delete()
         downloadJobs[id]?.cancel()
         _state.update { it.copy(downloads = it.downloads.filter { d -> d.id != id }) }
+    }
+
+    fun openFile(id: String, context: Context) {
+        val item = _state.value.downloads.find { it.id == id } ?: return
+        val file = File(item.outputPath)
+        if (!file.exists()) return
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, context.contentResolver.getType(uri) ?: "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Open with"))
+        } catch (_: Exception) {
+            val uri = Uri.fromFile(file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "*/*")
+            }
+            context.startActivity(Intent.createChooser(intent, "Open with"))
+        }
+    }
+
+    fun shareFile(id: String, context: Context) {
+        val item = _state.value.downloads.find { it.id == id } ?: return
+        val file = File(item.outputPath)
+        if (!file.exists()) return
+        try {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = context.contentResolver.getType(uri) ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share via"))
+        } catch (_: Exception) {
+            val uri = Uri.fromFile(file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share via"))
+        }
     }
 
     private fun updateItem(id: String, block: (DownloadItem) -> DownloadItem) {
