@@ -1,3 +1,32 @@
+import java.net.URL
+
+tasks.register("downloadYtDlpBinaries") {
+    val arm64File = file("src/main/jniLibs/arm64-v8a/libytdlp.so")
+    val x86File   = file("src/main/jniLibs/x86_64/libytdlp.so")
+    outputs.files(arm64File, x86File)
+
+    doLast {
+        arm64File.parentFile.mkdirs()
+        x86File.parentFile.mkdirs()
+        if (!arm64File.exists() || arm64File.length() < 1_000_000L) {
+            println("Downloading yt-dlp for arm64-v8a...")
+            URL("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_android")
+                .openStream().use { src -> arm64File.outputStream().use { src.copyTo(it) } }
+            println("arm64 binary: ${arm64File.length()} bytes")
+        }
+        if (!x86File.exists() || x86File.length() < 1_000_000L) {
+            println("Downloading yt-dlp for x86_64...")
+            URL("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux")
+                .openStream().use { src -> x86File.outputStream().use { src.copyTo(it) } }
+            println("x86_64 binary: ${x86File.length()} bytes")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild") dependsOn("downloadYtDlpBinaries")
+}
+
 plugins {
     id("axbrowser.android.application")
     id("axbrowser.compose")
@@ -8,9 +37,21 @@ plugins {
 
 android {
     namespace = "com.akay.axbrowser"
+
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools.build:desugaring:2.0.4")
+
     implementation(project(":core:core-ui"))
     implementation(project(":core:core-domain"))
     implementation(project(":core:core-data"))

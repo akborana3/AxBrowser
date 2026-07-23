@@ -108,8 +108,9 @@ fun SettingsScreen(
                     checked = uiState.isErudaEnabled,
                     onCheckedChange = { viewModel.setErudaEnabled(it) }
                 )
+                val ctx = androidx.compose.ui.platform.LocalContext.current
                 Text(
-                    text = if (uiState.ytDlpInstalled) "yt-dlp: Installed" else "yt-dlp: Not installed",
+                    text = "yt-dlp: ${com.akay.feature.downloads.engine.YtDlpSetup.statusString(ctx)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (uiState.ytDlpInstalled) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)

@@ -18,10 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 data class DownloadItem(
@@ -62,8 +60,17 @@ class DownloadViewModel @Inject constructor(
 
     private val ytDlpEngine = YtDlpEngine(application)
     private val directEngine = DirectDownloadEngine(
-        OkHttpClient.Builder()
-            .readTimeout(0, TimeUnit.SECONDS)
+        okhttp3.OkHttpClient.Builder()
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .addInterceptor { chain ->
+                val req = chain.request().newBuilder()
+                    .addHeader("User-Agent", "Mozilla/5.0 (Android) AxBrowser/1.0")
+                    .build()
+                chain.proceed(req)
+            }
             .build()
     )
     private val downloadJobs = mutableMapOf<String, Job>()
@@ -78,77 +85,39 @@ class DownloadViewModel @Inject constructor(
     }
 
     private fun checkYtDlp() {
-        val ready = YtDlpSetup.isInstalled(getApplication())
-        _state.update { it.copy(ytDlpReady = ready) }
-        if (!ready) setupYtDlp()
-    }
-
-    fun setupYtDlp() {
-        viewModelScope.launch {
-            _state.update { it.copy(isSettingUpYtDlp = true, setupError = null) }
-            YtDlpSetup.setup(
-                context = getApplication(),
-                client = okhttp3.OkHttpClient.Builder().connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS).readTimeout(300, java.util.concurrent.TimeUnit.SECONDS).build(),
-                onProgress = { p -> _state.update { it.copy(ytDlpSetupProgress = p) } }
-            ).onSuccess {
-                _state.update { it.copy(ytDlpReady = true, isSettingUpYtDlp = false, setupError = null) }
-            }.onFailure { error ->
-                _state.update { it.copy(isSettingUpYtDlp = false, ytDlpReady = false, setupError = "Setup failed: ${error.message ?: "Unknown error"}. Check internet connection.") }
+        val installed = YtDlpSetup.isInstalled(getApplication())
+        _state.update { it.copy(ytDlpReady = installed) }
+        if (!installed) {
+            _state.update {
+                it.copy(setupError = "yt-dlp not found. Rebuild the app to rebundle it.\n" +
+                        "Status: ${YtDlpSetup.statusString(getApplication())}")
             }
         }
+    }
+
+    fun retryYtDlpCheck() {
+        checkYtDlp()
     }
 
     fun enqueue(url: String, filename: String, useYtDlp: Boolean, formatId: String? = null): String {
-        val id = java.util.UUID.randomUUID().toString()
-        val effectiveUseYtDlp = useYtDlp && _state.value.ytDlpReady
-
-        if (useYtDlp && !_state.value.ytDlpReady) {
-            val outputFile = uniqueFile(downloadDir, filename)
-            val item = DownloadItem(
-                id = id, url = url, filename = outputFile.name,
-                outputPath = outputFile.absolutePath, useYtDlp = true, formatId = formatId,
-                status = ItemStatus.QUEUED,
-                errorMsg = if (_state.value.isSettingUpYtDlp) "Waiting for yt-dlp setup to complete..." else "yt-dlp not installed. Tap retry after setup completes."
-            )
-            _state.update { it.copy(downloads = it.downloads + item) }
-            if (_state.value.isSettingUpYtDlp) {
-                watchForSetupAndStart(item)
-            }
-            return id
-        }
-
+        val id = UUID.randomUUID().toString()
         val outputFile = uniqueFile(downloadDir, filename)
+        val canUseYtDlp = useYtDlp && _state.value.ytDlpReady
+
         val item = DownloadItem(
             id = id, url = url, filename = outputFile.name,
-            outputPath = outputFile.absolutePath, useYtDlp = effectiveUseYtDlp, formatId = formatId
+            outputPath = outputFile.absolutePath, useYtDlp = canUseYtDlp, formatId = formatId,
+            errorMsg = if (useYtDlp && !_state.value.ytDlpReady) "yt-dlp not available - using direct download" else null
         )
         _state.update { it.copy(downloads = it.downloads + item) }
         startDownload(item)
         return id
     }
 
-    private fun watchForSetupAndStart(item: DownloadItem) {
-        viewModelScope.launch {
-            var attempts = 0
-            while (attempts < 300) {
-                kotlinx.coroutines.delay(1000L)
-                if (_state.value.ytDlpReady) {
-                    startDownload(item.copy(status = ItemStatus.QUEUED, errorMsg = null))
-                    return@launch
-                }
-                if (!_state.value.isSettingUpYtDlp) {
-                    updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = "yt-dlp setup failed. Tap retry.") }
-                    return@launch
-                }
-                attempts++
-            }
-            updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = "Timeout waiting for yt-dlp.") }
-        }
-    }
-
     private fun startDownload(item: DownloadItem) {
         val job = viewModelScope.launch {
             updateItem(item.id) { it.copy(status = ItemStatus.RUNNING) }
+            val ctx: android.content.Context = getApplication()
             val flow: kotlinx.coroutines.flow.Flow<DownloadProgressUnified> = if (item.useYtDlp && _state.value.ytDlpReady) {
                 ytDlpEngine.download(item.url, item.outputPath, item.formatId)
             } else {
@@ -164,11 +133,13 @@ class DownloadViewModel @Inject constructor(
                             status = ItemStatus.RUNNING
                         )
                     }
-                    DownloadProgressUnified.Completed -> updateItem(item.id) {
-                        it.copy(progress = 100f, status = ItemStatus.COMPLETED)
+                    DownloadProgressUnified.Completed -> {
+                        updateItem(item.id) { it.copy(progress = 100f, status = ItemStatus.COMPLETED) }
+                        com.akay.feature.downloads.notification.DownloadNotificationManager.showComplete(ctx, item.id, item.filename)
                     }
-                    is DownloadProgressUnified.Failed -> updateItem(item.id) {
-                        it.copy(status = ItemStatus.FAILED, errorMsg = progress.reason)
+                    is DownloadProgressUnified.Failed -> {
+                        updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = progress.reason) }
+                        com.akay.feature.downloads.notification.DownloadNotificationManager.showFailed(ctx, item.id, item.filename, progress.reason)
                     }
                 }
             }
@@ -191,6 +162,7 @@ class DownloadViewModel @Inject constructor(
     fun cancel(id: String) {
         directEngine.cancel(id)
         downloadJobs[id]?.cancel()
+        com.akay.feature.downloads.notification.DownloadNotificationManager.cancel(getApplication(), id)
         updateItem(id) { it.copy(status = ItemStatus.CANCELLED) }
     }
 
@@ -204,6 +176,7 @@ class DownloadViewModel @Inject constructor(
         val item = _state.value.downloads.find { it.id == id } ?: return
         File(item.outputPath).delete()
         downloadJobs[id]?.cancel()
+        com.akay.feature.downloads.notification.DownloadNotificationManager.cancel(getApplication(), id)
         _state.update { it.copy(downloads = it.downloads.filter { d -> d.id != id }) }
     }
 

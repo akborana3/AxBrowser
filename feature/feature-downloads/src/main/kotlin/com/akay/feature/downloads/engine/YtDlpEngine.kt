@@ -12,113 +12,80 @@ import kotlin.coroutines.coroutineContext
 
 class YtDlpEngine(private val context: Context) {
 
-    suspend fun getFormats(url: String): List<MediaFormat> {
-        val binary = YtDlpSetup.getBinaryFile(context).absolutePath
-        val process = ProcessBuilder(binary, "-F", "--no-playlist", url)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        return parseFormats(output)
-    }
-
     fun download(
         url: String,
         outputPath: String,
         formatId: String? = null
     ): Flow<DownloadProgressUnified> = flow {
-        val binaryFile = YtDlpSetup.getBinaryFile(context)
-        if (!binaryFile.exists()) {
-            emit(DownloadProgressUnified.Failed("yt-dlp binary not found. Open Downloads tab to reinstall."))
-            return@flow
-        }
-        if (!binaryFile.canExecute()) {
-            binaryFile.setExecutable(true, false)
-        }
-        if (!binaryFile.canExecute()) {
-            emit(DownloadProgressUnified.Failed("yt-dlp binary not executable. Try reinstalling in Downloads tab."))
+        val binaryPath = runCatching { requireBinary() }.getOrElse { e ->
+            emit(DownloadProgressUnified.Failed(e.message ?: "Binary error"))
             return@flow
         }
 
-        val binary = binaryFile.absolutePath
-        val cmd = mutableListOf(binary, "--no-playlist", "--newline", "--no-warnings", "-o", outputPath)
-        if (formatId != null) cmd.addAll(listOf("-f", formatId))
-        cmd.add(url)
+        val cmd = buildList {
+            add(binaryPath)
+            add("--no-playlist")
+            add("--newline")
+            add("--no-warnings")
+            add("--no-check-certificates")
+            add("--no-part")
+            add("--retries")
+            add("3")
+            add("--fragment-retries")
+            add("3")
+            add("-o")
+            add(outputPath)
+            if (formatId != null) { add("-f"); add(formatId) }
+            add(url)
+        }
 
         val process = try {
             ProcessBuilder(cmd).redirectErrorStream(true).start()
         } catch (e: IOException) {
-            emit(DownloadProgressUnified.Failed("Failed to launch yt-dlp: ${e.message}"))
+            emit(DownloadProgressUnified.Failed("Cannot start yt-dlp: ${e.message}"))
             return@flow
         } catch (e: Exception) {
-            emit(DownloadProgressUnified.Failed("Unexpected error starting yt-dlp: ${e.message}"))
+            emit(DownloadProgressUnified.Failed("Unexpected launch error: ${e.message}"))
             return@flow
         }
 
         try {
-            process.inputStream.bufferedReader().useLines { lines ->
-                for (line in lines) {
-                    if (!coroutineContext.isActive) {
-                        process.destroy()
-                        return@useLines
-                    }
-                    val progress = parseProgressLine(line)
-                    if (progress != null) emit(progress)
+            val reader = process.inputStream.bufferedReader()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (!coroutineContext.isActive) {
+                    process.destroy()
+                    return@flow
                 }
+                val l = line ?: continue
+                val progress = parseProgressLine(l)
+                if (progress != null) emit(progress)
             }
             val exitCode = process.waitFor()
-            if (exitCode == 0) {
-                emit(DownloadProgressUnified.Completed)
-            } else {
-                emit(DownloadProgressUnified.Failed("yt-dlp failed (exit $exitCode). URL may be unsupported or geo-blocked."))
+            when {
+                exitCode == 0 -> emit(DownloadProgressUnified.Completed)
+                exitCode == 1 -> emit(DownloadProgressUnified.Failed("yt-dlp error (exit 1) - URL may be geo-blocked or requires login"))
+                else -> emit(DownloadProgressUnified.Failed("yt-dlp exited with code $exitCode"))
             }
         } catch (e: Exception) {
             emit(DownloadProgressUnified.Failed("Download interrupted: ${e.message}"))
         } finally {
-            process.destroyForcibly()
+            runCatching { process.destroyForcibly() }
         }
     }.flowOn(Dispatchers.IO)
 
-    private fun parseProgressLine(line: String): DownloadProgressUnified? {
-        val regex = Regex("""\[download\]\s+([\d.]+)%\s+of\s+([\d.]+\w+)\s+at\s+([\d.]+\w+/s)""")
+    private fun requireBinary(): String {
+        val path = YtDlpSetup.getBinaryPath(context)
+        val file = File(path)
+        check(file.exists()) { "yt-dlp binary not found at $path - rebuild the app" }
+        check(file.length() > 1_000_000L) { "yt-dlp binary corrupted (${file.length()} bytes)" }
+        return path
+    }
+
+    private fun parseProgressLine(line: String): DownloadProgressUnified.Running? {
+        val regex = Regex("""\[download\]\s+([\d.]+)%\s+of\s+~?([\d.]+\w+)\s+at\s+([\d.]+\w+/s)""")
         val match = regex.find(line) ?: return null
         val percent = match.groupValues[1].toFloatOrNull() ?: return null
-        val totalStr = match.groupValues[2]
-        val speedStr = match.groupValues[3]
-        return DownloadProgressUnified.Running(
-            percent = percent,
-            totalBytesStr = totalStr,
-            speedStr = speedStr
-        )
+        return DownloadProgressUnified.Running(percent = percent, totalBytesStr = match.groupValues[2], speedStr = match.groupValues[3])
     }
-
-    private fun parseFormats(output: String): List<MediaFormat> {
-        val formats = mutableListOf<MediaFormat>()
-        output.lines().forEach { line ->
-            if (line.startsWith("--") || line.isBlank()) return@forEach
-            val parts = line.trim().split("\\s+".toRegex())
-            if (parts.size >= 3 && parts[0].matches(Regex("\\d+[a-z]?"))) {
-                formats.add(MediaFormat(
-                    id = parts[0],
-                    ext = parts.getOrElse(1) { "" },
-                    resolution = parts.getOrElse(2) { "" },
-                    description = line.trim()
-                ))
-            }
-        }
-        return formats
-    }
-}
-
-data class MediaFormat(
-    val id: String,
-    val ext: String,
-    val resolution: String,
-    val description: String
-)
-
-sealed class YtDlpProgress {
-    data class Running(val percent: Float, val totalBytesStr: String, val speedStr: String) : YtDlpProgress()
-    data object Completed : YtDlpProgress()
-    data class Failed(val reason: String) : YtDlpProgress()
 }

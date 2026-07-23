@@ -33,3 +33,7 @@ Thumbs.db
 
 # Local config
 local.properties
+
+# yt-dlp binaries - downloaded at build time
+app/src/main/jniLibs/arm64-v8a/libytdlp.so
+app/src/main/jniLibs/x86_64/libytdlp.so

@@ -91,22 +91,20 @@ fun DownloadManagerScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (state.isSettingUpYtDlp) {
-                YtDlpSetupBanner(progress = state.ytDlpSetupProgress)
-            }
-
-            state.setupError?.let { error ->
+            if (!state.ytDlpReady) {
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                 ) {
                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Download engine setup failed", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
-                            Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f))
+                            Text("yt-dlp not available", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text(state.setupError ?: "Rebuild the app to rebundle yt-dlp.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f))
                         }
                         Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = { viewModel.setupYtDlp() }) {
+                        TextButton(onClick = { viewModel.retryYtDlpCheck() }) {
                             Text("Retry", color = MaterialTheme.colorScheme.error)
                         }
                     }
