@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import java.io.File
+import java.io.IOException
 import kotlin.coroutines.coroutineContext
 
 class YtDlpEngine(private val context: Context) {
@@ -26,20 +27,33 @@ class YtDlpEngine(private val context: Context) {
         outputPath: String,
         formatId: String? = null
     ): Flow<DownloadProgressUnified> = flow {
-        val binary = YtDlpSetup.getBinaryFile(context).absolutePath
-        val cmd = mutableListOf(
-            binary,
-            "--no-playlist",
-            "--newline",
-            "--progress-template", "%(progress)j",
-            "-o", outputPath
-        )
+        val binaryFile = YtDlpSetup.getBinaryFile(context)
+        if (!binaryFile.exists()) {
+            emit(DownloadProgressUnified.Failed("yt-dlp binary not found. Open Downloads tab to reinstall."))
+            return@flow
+        }
+        if (!binaryFile.canExecute()) {
+            binaryFile.setExecutable(true, false)
+        }
+        if (!binaryFile.canExecute()) {
+            emit(DownloadProgressUnified.Failed("yt-dlp binary not executable. Try reinstalling in Downloads tab."))
+            return@flow
+        }
+
+        val binary = binaryFile.absolutePath
+        val cmd = mutableListOf(binary, "--no-playlist", "--newline", "--no-warnings", "-o", outputPath)
         if (formatId != null) cmd.addAll(listOf("-f", formatId))
         cmd.add(url)
 
-        val process = ProcessBuilder(cmd)
-            .redirectErrorStream(true)
-            .start()
+        val process = try {
+            ProcessBuilder(cmd).redirectErrorStream(true).start()
+        } catch (e: IOException) {
+            emit(DownloadProgressUnified.Failed("Failed to launch yt-dlp: ${e.message}"))
+            return@flow
+        } catch (e: Exception) {
+            emit(DownloadProgressUnified.Failed("Unexpected error starting yt-dlp: ${e.message}"))
+            return@flow
+        }
 
         try {
             process.inputStream.bufferedReader().useLines { lines ->
@@ -56,8 +70,10 @@ class YtDlpEngine(private val context: Context) {
             if (exitCode == 0) {
                 emit(DownloadProgressUnified.Completed)
             } else {
-                emit(DownloadProgressUnified.Failed("yt-dlp exited with code $exitCode"))
+                emit(DownloadProgressUnified.Failed("yt-dlp failed (exit $exitCode). URL may be unsupported or geo-blocked."))
             }
+        } catch (e: Exception) {
+            emit(DownloadProgressUnified.Failed("Download interrupted: ${e.message}"))
         } finally {
             process.destroyForcibly()
         }

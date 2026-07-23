@@ -27,28 +27,41 @@ object YtDlpSetup {
             val binDir = File(context.filesDir, "bin").also { it.mkdirs() }
             val binFile = File(binDir, "yt-dlp")
 
-            val request = Request.Builder().url(YTDLP_DOWNLOAD_URL).build()
+            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
+            val downloadUrl = when {
+                abi.contains("x86_64") -> "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+                abi.contains("x86")    -> "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+                else                   -> YTDLP_DOWNLOAD_URL
+            }
+
+            val request = Request.Builder().url(downloadUrl).addHeader("User-Agent", "AxBrowser/1.0").build()
             val response = client.newCall(request).execute()
+            check(response.isSuccessful) { "HTTP ${response.code} downloading yt-dlp" }
             val body = response.body ?: error("Empty response body")
             val totalBytes = body.contentLength()
 
             binFile.outputStream().use { out ->
                 var downloaded = 0L
                 body.byteStream().use { input ->
-                    val buffer = ByteArray(8192)
+                    val buffer = ByteArray(32768)
                     var bytes: Int
                     while (input.read(buffer).also { bytes = it } != -1) {
                         out.write(buffer, 0, bytes)
                         downloaded += bytes
-                        if (totalBytes > 0) {
-                            onProgress(((downloaded * 100) / totalBytes).toInt())
-                        }
+                        if (totalBytes > 0) onProgress(((downloaded * 100) / totalBytes).toInt())
                     }
                 }
             }
 
-            Runtime.getRuntime().exec(arrayOf("chmod", "+x", binFile.absolutePath)).waitFor()
-            check(binFile.canExecute()) { "Binary not executable after chmod" }
+            binFile.setExecutable(true, false)
+            binFile.setReadable(true, false)
+
+            if (!binFile.canExecute()) {
+                try { ProcessBuilder("chmod", "755", binFile.absolutePath).start().waitFor() } catch (_: Exception) {}
+            }
+
+            check(binFile.exists()) { "Binary file does not exist after download" }
+            check(binFile.length() > 0) { "Binary file is empty" }
         }
     }
 }

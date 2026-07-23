@@ -96,6 +96,10 @@ fun BrowserScreen(
 
     val networkMedia by NetworkInterceptor.detectedMedia.collectAsState()
     val erudaEnabled by viewModel.erudaEnabled.collectAsState(initial = false)
+    val erudaEnabledState = remember { mutableStateOf(false) }
+    LaunchedEffect(erudaEnabled) {
+        erudaEnabledState.value = erudaEnabled
+    }
     val mediaCount = uiState.detectedMediaCount + networkMedia.size
 
     Scaffold(
@@ -221,7 +225,7 @@ fun BrowserScreen(
                                 if (url.isNotBlank() && url != "about:blank") {
                                     viewModel.recordHistory(url, title ?: url)
                                 }
-                                if (erudaEnabled) {
+                                if (erudaEnabledState.value) {
                                     val js = runCatching {
                                         ctx.assets.open("js/eruda_init.js").bufferedReader().readText()
                                     }.getOrNull()
@@ -359,10 +363,18 @@ fun BrowserScreen(
             PasteLinkDialog(
                 url = pasteUrl,
                 onUrlChange = { pasteUrl = it },
-                onConfirm = {
+                onOpenInBrowser = {
                     showPasteLinkDialog = false
                     if (pasteUrl.isNotBlank()) {
                         viewModel.navigateToUrl(pasteUrl)
+                        pasteUrl = ""
+                    }
+                },
+                onDownload = {
+                    showPasteLinkDialog = false
+                    if (pasteUrl.isNotBlank()) {
+                        val fname = pasteUrl.substringAfterLast("/").substringBefore("?").ifBlank { "download_${System.currentTimeMillis()}" }
+                        downloadViewModel.enqueue(url = pasteUrl, filename = fname, useYtDlp = true)
                         pasteUrl = ""
                     }
                 },
@@ -376,20 +388,17 @@ fun BrowserScreen(
 fun PasteLinkDialog(
     url: String,
     onUrlChange: (String) -> Unit,
-    onConfirm: () -> Unit,
+    onOpenInBrowser: () -> Unit,
+    onDownload: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.Link, contentDescription = null) },
-        title = { Text("Paste Link to Download") },
+        title = { Text("Paste Link") },
         text = {
             Column {
-                Text(
-                    "Paste a video or file URL to download.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Enter a URL to open or download", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
                     value = url,
@@ -397,22 +406,25 @@ fun PasteLinkDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("https://...") },
                     singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                        fontFamily = FontFamily.Monospace
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Primary, unfocusedBorderColor = MaterialTheme.colorScheme.surfaceVariant)
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = url.isNotBlank()) { Text("Open") }
+            Row {
+                TextButton(onClick = onDownload, enabled = url.isNotBlank()) {
+                    Icon(Icons.Default.Download, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Download")
+                }
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = onOpenInBrowser, enabled = url.isNotBlank()) {
+                    Text("Open")
+                }
+            }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 

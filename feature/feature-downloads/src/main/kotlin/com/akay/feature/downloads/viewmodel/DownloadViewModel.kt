@@ -44,7 +44,8 @@ data class DownloadManagerState(
     val downloads: List<DownloadItem> = emptyList(),
     val ytDlpReady: Boolean = false,
     val ytDlpSetupProgress: Int = 0,
-    val isSettingUpYtDlp: Boolean = false
+    val isSettingUpYtDlp: Boolean = false,
+    val setupError: String? = null
 ) {
     val active get() = downloads.filter { it.status == ItemStatus.RUNNING || it.status == ItemStatus.QUEUED }
     val completed get() = downloads.filter { it.status == ItemStatus.COMPLETED }
@@ -66,8 +67,11 @@ class DownloadViewModel @Inject constructor(
             .build()
     )
     private val downloadJobs = mutableMapOf<String, Job>()
-    private val downloadDir = File(application.getExternalFilesDir(null), "AxBrowser Downloads")
-        .also { it.mkdirs() }
+    private val downloadDir: File = run {
+        val ext = application.getExternalFilesDir(null)
+        val base = ext ?: application.filesDir
+        File(base, "AxBrowser Downloads").also { it.mkdirs() }
+    }
 
     init {
         checkYtDlp()
@@ -81,29 +85,65 @@ class DownloadViewModel @Inject constructor(
 
     fun setupYtDlp() {
         viewModelScope.launch {
-            _state.update { it.copy(isSettingUpYtDlp = true) }
+            _state.update { it.copy(isSettingUpYtDlp = true, setupError = null) }
             YtDlpSetup.setup(
                 context = getApplication(),
-                client = OkHttpClient(),
+                client = okhttp3.OkHttpClient.Builder().connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS).readTimeout(300, java.util.concurrent.TimeUnit.SECONDS).build(),
                 onProgress = { p -> _state.update { it.copy(ytDlpSetupProgress = p) } }
             ).onSuccess {
-                _state.update { it.copy(ytDlpReady = true, isSettingUpYtDlp = false) }
-            }.onFailure {
-                _state.update { it.copy(isSettingUpYtDlp = false) }
+                _state.update { it.copy(ytDlpReady = true, isSettingUpYtDlp = false, setupError = null) }
+            }.onFailure { error ->
+                _state.update { it.copy(isSettingUpYtDlp = false, ytDlpReady = false, setupError = "Setup failed: ${error.message ?: "Unknown error"}. Check internet connection.") }
             }
         }
     }
 
     fun enqueue(url: String, filename: String, useYtDlp: Boolean, formatId: String? = null): String {
-        val id = UUID.randomUUID().toString()
+        val id = java.util.UUID.randomUUID().toString()
+        val effectiveUseYtDlp = useYtDlp && _state.value.ytDlpReady
+
+        if (useYtDlp && !_state.value.ytDlpReady) {
+            val outputFile = uniqueFile(downloadDir, filename)
+            val item = DownloadItem(
+                id = id, url = url, filename = outputFile.name,
+                outputPath = outputFile.absolutePath, useYtDlp = true, formatId = formatId,
+                status = ItemStatus.QUEUED,
+                errorMsg = if (_state.value.isSettingUpYtDlp) "Waiting for yt-dlp setup to complete..." else "yt-dlp not installed. Tap retry after setup completes."
+            )
+            _state.update { it.copy(downloads = it.downloads + item) }
+            if (_state.value.isSettingUpYtDlp) {
+                watchForSetupAndStart(item)
+            }
+            return id
+        }
+
         val outputFile = uniqueFile(downloadDir, filename)
         val item = DownloadItem(
             id = id, url = url, filename = outputFile.name,
-            outputPath = outputFile.absolutePath, useYtDlp = useYtDlp, formatId = formatId
+            outputPath = outputFile.absolutePath, useYtDlp = effectiveUseYtDlp, formatId = formatId
         )
         _state.update { it.copy(downloads = it.downloads + item) }
         startDownload(item)
         return id
+    }
+
+    private fun watchForSetupAndStart(item: DownloadItem) {
+        viewModelScope.launch {
+            var attempts = 0
+            while (attempts < 300) {
+                kotlinx.coroutines.delay(1000L)
+                if (_state.value.ytDlpReady) {
+                    startDownload(item.copy(status = ItemStatus.QUEUED, errorMsg = null))
+                    return@launch
+                }
+                if (!_state.value.isSettingUpYtDlp) {
+                    updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = "yt-dlp setup failed. Tap retry.") }
+                    return@launch
+                }
+                attempts++
+            }
+            updateItem(item.id) { it.copy(status = ItemStatus.FAILED, errorMsg = "Timeout waiting for yt-dlp.") }
+        }
     }
 
     private fun startDownload(item: DownloadItem) {

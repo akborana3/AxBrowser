@@ -8,10 +8,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.*
 import androidx.navigation.compose.*
 import com.akay.feature.bookmarks.ui.BookmarkScreen
 import com.akay.feature.downloads.ui.DownloadManagerScreen
+import com.akay.feature.downloads.viewmodel.DownloadViewModel
 import com.akay.feature.filemanager.ui.FileManagerScreen
 import com.akay.feature.history.ui.HistoryScreen
 import com.akay.feature.settings.ui.SettingsScreen
@@ -25,21 +27,15 @@ private sealed class NavRoute(val route: String, val label: String, val icon: Im
     object Settings  : NavRoute("settings",  "Settings",  Icons.Default.Settings)
 }
 
-private val bottomNavItems = listOf(
-    NavRoute.Browser,
-    NavRoute.Downloads,
-    NavRoute.Bookmarks,
-    NavRoute.History,
-    NavRoute.Settings
-)
+private val bottomNavItems = listOf(NavRoute.Browser, NavRoute.Downloads, NavRoute.Bookmarks, NavRoute.History, NavRoute.Settings)
 
 @Composable
 fun BrowserNavHost() {
     val navController = rememberNavController()
     val currentBackStack by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStack?.destination?.route
-
     val showBottomBar = bottomNavItems.any { it.route == currentRoute }
+    val downloadViewModel: DownloadViewModel = hiltViewModel()
 
     Scaffold(
         bottomBar = {
@@ -69,26 +65,16 @@ fun BrowserNavHost() {
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(NavRoute.Browser.route) {
-                BrowserScreen()
+                BrowserScreen(downloadViewModel = downloadViewModel)
             }
             composable(NavRoute.Downloads.route) {
-                DownloadManagerScreen(onBack = { navController.popBackStack() })
+                DownloadManagerScreen(onBack = { navController.popBackStack() }, viewModel = downloadViewModel)
             }
             composable(NavRoute.Bookmarks.route) {
-                BookmarkScreen(
-                    onBookmarkClick = { url ->
-                        navController.navigate(NavRoute.Browser.route)
-                    },
-                    onBack = { navController.popBackStack() }
-                )
+                BookmarkScreen(onBookmarkClick = { navController.navigate(NavRoute.Browser.route) }, onBack = { navController.popBackStack() })
             }
             composable(NavRoute.History.route) {
-                HistoryScreen(
-                    onHistoryClick = { url ->
-                        navController.navigate(NavRoute.Browser.route)
-                    },
-                    onBack = { navController.popBackStack() }
-                )
+                HistoryScreen(onHistoryClick = { navController.navigate(NavRoute.Browser.route) }, onBack = { navController.popBackStack() })
             }
             composable(NavRoute.Settings.route) {
                 SettingsScreen(onBack = { navController.popBackStack() })
@@ -105,12 +91,9 @@ fun BrowserNavHost() {
                 VideoPlayerScreen(videoUrl = url, title = title, onBack = { navController.popBackStack() })
             }
             composable("filemanager") {
-                FileManagerScreen(
-                    onFileClick = { path ->
-                        val encoded = Uri.encode(path)
-                        navController.navigate("videoplayer?url=file://$encoded")
-                    }
-                )
+                FileManagerScreen(onFileClick = { path ->
+                    navController.navigate("videoplayer?url=${Uri.encode("file://$path")}")
+                })
             }
         }
     }

@@ -1,7 +1,6 @@
 package com.akay.feature.browser.webview
 
 import android.webkit.ConsoleMessage
-import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -28,16 +27,6 @@ class AxWebChromeClient(
                 // Log errors in debug builds
             }
         }
-        return true
-    }
-
-    override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-        result?.cancel()
-        return true
-    }
-
-    override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
-        result?.cancel()
         return true
     }
 
