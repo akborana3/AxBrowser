@@ -50,7 +50,7 @@ android {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools.build:desugaring:2.0.4")
+    coreLibraryDesugaring("com.android.tools:desugaring:2.0.4")
 
     implementation(project(":core:core-ui"))
     implementation(project(":core:core-domain"))
