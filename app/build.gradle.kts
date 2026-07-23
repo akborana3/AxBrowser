@@ -8,17 +8,51 @@ tasks.register("downloadYtDlpBinaries") {
     doLast {
         arm64File.parentFile.mkdirs()
         x86File.parentFile.mkdirs()
+
+        // Try multiple URLs for ARM64
+        val arm64Urls = listOf(
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp",
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+        )
         if (!arm64File.exists() || arm64File.length() < 1_000_000L) {
-            println("Downloading yt-dlp for arm64-v8a...")
-            URL("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_android")
-                .openStream().use { src -> arm64File.outputStream().use { src.copyTo(it) } }
-            println("arm64 binary: ${arm64File.length()} bytes")
+            for (url in arm64Urls) {
+                try {
+                    println("Trying $url for arm64-v8a...")
+                    URL(url).openStream().use { src -> arm64File.outputStream().use { src.copyTo(it) } }
+                    if (arm64File.length() > 1_000_000L) {
+                        println("arm64 binary: ${arm64File.length()} bytes")
+                        break
+                    }
+                } catch (e: Exception) {
+                    println("Failed: ${e.message}")
+                    arm64File.delete()
+                }
+            }
         }
+
+        // Try multiple URLs for x86_64
+        val x86Urls = listOf(
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
+            "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
+        )
         if (!x86File.exists() || x86File.length() < 1_000_000L) {
-            println("Downloading yt-dlp for x86_64...")
-            URL("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux")
-                .openStream().use { src -> x86File.outputStream().use { src.copyTo(it) } }
-            println("x86_64 binary: ${x86File.length()} bytes")
+            for (url in x86Urls) {
+                try {
+                    println("Trying $url for x86_64...")
+                    URL(url).openStream().use { src -> x86File.outputStream().use { src.copyTo(it) } }
+                    if (x86File.length() > 1_000_000L) {
+                        println("x86_64 binary: ${x86File.length()} bytes")
+                        break
+                    }
+                } catch (e: Exception) {
+                    println("Failed: ${e.message}")
+                    x86File.delete()
+                }
+            }
+        }
+
+        if (!arm64File.exists() && !x86File.exists()) {
+            println("WARNING: Could not download yt-dlp binaries. yt-dlp feature will be disabled.")
         }
     }
 }
