@@ -1,39 +1,20 @@
-# Built files
+# Android
 *.iml
 .gradle/
 /local.properties
 /.idea/
+.DS_Store
 /build/
-/captures
+/captures/
 .externalNativeBuild/
 .cxx/
-*.apk
-*.aab
-*.ap_
-*.dex
 
-# App build outputs
-/app/build/
-/core/*/build/
-/feature/*/build/
-/build-logic/convention/build/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-*.swp
-*.swo
-
-# Keystore
+# Keystores
 *.jks
 *.keystore
+release.keystore
 
-# Local config
-local.properties
-
-# yt-dlp binaries - downloaded at build time
+# yt-dlp binaries — auto-downloaded by Gradle task "downloadYtDlpBinaries"
+# Do NOT commit these — they are 60–70 MB each and rebuilt from GitHub releases
 app/src/main/jniLibs/arm64-v8a/libytdlp.so
 app/src/main/jniLibs/x86_64/libytdlp.so
