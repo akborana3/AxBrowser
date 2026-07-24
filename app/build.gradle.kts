@@ -1,110 +1,6 @@
 import java.net.HttpURLConnection
 import java.net.URL
 
-fun downloadWithRedirects(urlStr: String, destFile: File): Boolean {
-    var currentUrl = urlStr
-    var redirects = 0
-    val maxRedirects = 10
-
-    while (redirects <= maxRedirects) {
-        val connection = URL(currentUrl).openConnection() as HttpURLConnection
-        try {
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = 30_000
-            connection.readTimeout    = 300_000
-            connection.setRequestProperty("User-Agent", "AxBrowser-Build/1.0")
-            connection.setRequestProperty("Accept", "*/*")
-            connection.connect()
-
-            val code = connection.responseCode
-            when (code) {
-                200 -> {
-                    connection.inputStream.use { input ->
-                        destFile.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    val size = destFile.length()
-                    if (size < 1_000_000L) {
-                        println("  ✗ File too small after download: $size bytes (expected >1MB)")
-                        destFile.delete()
-                        return false
-                    }
-                    println("  ✓ Downloaded ${size / (1024 * 1024)}MB → ${destFile.name}")
-                    return true
-                }
-                301, 302, 303, 307, 308 -> {
-                    val location = connection.getHeaderField("Location")
-                    if (location.isNullOrBlank()) {
-                        println("  ✗ Redirect with no Location header from $currentUrl")
-                        return false
-                    }
-                    currentUrl = if (location.startsWith("http")) location
-                                 else "https://github.com$location"
-                    redirects++
-                    println("  → Redirect $redirects → $currentUrl")
-                }
-                else -> {
-                    println("  ✗ HTTP $code from $currentUrl")
-                    return false
-                }
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
-    println("  ✗ Too many redirects for $urlStr")
-    return false
-}
-
-tasks.register("downloadYtDlpBinaries") {
-    val arm64File = file("src/main/jniLibs/arm64-v8a/libytdlp.so")
-    val x86File   = file("src/main/jniLibs/x86_64/libytdlp.so")
-
-    doLast {
-        arm64File.parentFile.mkdirs()
-        x86File.parentFile.mkdirs()
-
-        if (!arm64File.exists() || arm64File.length() < 1_000_000L) {
-            arm64File.delete()
-            println("\n⬇  Downloading yt-dlp ARM64 (yt-dlp_linux_aarch64)...")
-            val arm64Urls = listOf(
-                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
-                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
-            )
-            var arm64Ok = false
-            for (url in arm64Urls) {
-                println("  Trying $url ...")
-                if (downloadWithRedirects(url, arm64File)) { arm64Ok = true; break }
-                arm64File.delete()
-            }
-            if (!arm64Ok) {
-                error("FATAL: Failed to download yt-dlp ARM64 binary. " +
-                      "Check internet connection and try again: ./gradlew downloadYtDlpBinaries")
-            }
-        } else {
-            println("✓  arm64 yt-dlp already present (${arm64File.length() / (1024*1024)}MB)")
-        }
-
-        if (!x86File.exists() || x86File.length() < 1_000_000L) {
-            x86File.delete()
-            println("\n⬇  Downloading yt-dlp x86_64 (yt-dlp_linux)...")
-            val ok = downloadWithRedirects(
-                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
-                x86File
-            )
-            if (!ok) {
-                println("⚠  Warning: x86_64 binary download failed. " +
-                        "yt-dlp won't work on emulators but will work on real devices.")
-            }
-        } else {
-            println("✓  x86_64 yt-dlp already present (${x86File.length() / (1024*1024)}MB)")
-        }
-    }
-}
-
-tasks.configureEach {
-    if (name == "preBuild") dependsOn("downloadYtDlpBinaries")
-}
-
 plugins {
     id("axbrowser.android.application")
     id("axbrowser.compose")
@@ -125,6 +21,98 @@ android {
             useLegacyPackaging = true
         }
     }
+}
+
+tasks.register("downloadYtDlpBinaries") {
+    val arm64File = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libytdlp.so").asFile
+    val x86File   = layout.projectDirectory.file("src/main/jniLibs/x86_64/libytdlp.so").asFile
+
+    doLast {
+        fun downloadWithRedirects(urlStr: String, destFile: File): Boolean {
+            var currentUrl = urlStr
+            var redirects = 0
+            val maxRedirects = 10
+            while (redirects <= maxRedirects) {
+                val connection = URL(currentUrl).openConnection() as HttpURLConnection
+                try {
+                    connection.instanceFollowRedirects = false
+                    connection.connectTimeout = 30_000
+                    connection.readTimeout = 300_000
+                    connection.setRequestProperty("User-Agent", "AxBrowser-Build/1.0")
+                    connection.connect()
+                    val code = connection.responseCode
+                    when (code) {
+                        200 -> {
+                            connection.inputStream.use { input ->
+                                destFile.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            val size = destFile.length()
+                            if (size < 1_000_000L) {
+                                println("  File too small: $size bytes")
+                                destFile.delete()
+                                return false
+                            }
+                            println("  Downloaded ${size / (1024 * 1024)}MB")
+                            return true
+                        }
+                        301, 302, 303, 307, 308 -> {
+                            val location = connection.getHeaderField("Location")
+                            if (location.isNullOrBlank()) return false
+                            currentUrl = if (location.startsWith("http")) location else "https://github.com$location"
+                            redirects++
+                            println("  Redirect $redirects -> $currentUrl")
+                        }
+                        else -> {
+                            println("  HTTP $code from $currentUrl")
+                            return false
+                        }
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            return false
+        }
+
+        arm64File.parentFile.mkdirs()
+        x86File.parentFile.mkdirs()
+
+        if (!arm64File.exists() || arm64File.length() < 1_000_000L) {
+            arm64File.delete()
+            println("\nDownloading yt-dlp ARM64...")
+            val arm64Urls = listOf(
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+            )
+            var arm64Ok = false
+            for (url in arm64Urls) {
+                println("  Trying $url ...")
+                if (downloadWithRedirects(url, arm64File)) { arm64Ok = true; break }
+                arm64File.delete()
+            }
+            if (!arm64Ok) {
+                error("FATAL: Failed to download yt-dlp ARM64 binary.")
+            }
+        } else {
+            println("arm64 yt-dlp already present (${arm64File.length() / (1024*1024)}MB)")
+        }
+
+        if (!x86File.exists() || x86File.length() < 1_000_000L) {
+            x86File.delete()
+            println("\nDownloading yt-dlp x86_64...")
+            val ok = downloadWithRedirects(
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
+                x86File
+            )
+            if (!ok) println("Warning: x86_64 binary download failed (optional)")
+        } else {
+            println("x86_64 yt-dlp already present (${x86File.length() / (1024*1024)}MB)")
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild") dependsOn("downloadYtDlpBinaries")
 }
 
 dependencies {
