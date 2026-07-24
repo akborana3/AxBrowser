@@ -65,12 +65,18 @@ tasks.register("downloadYtDlpBinaries") {
 
         if (!arm64File.exists() || arm64File.length() < 1_000_000L) {
             arm64File.delete()
-            println("\n⬇  Downloading yt-dlp ARM64 (yt-dlp_android)...")
-            val ok = downloadWithRedirects(
-                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_android",
-                arm64File
+            println("\n⬇  Downloading yt-dlp ARM64 (yt-dlp_linux_aarch64)...")
+            val arm64Urls = listOf(
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
+                "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
             )
-            if (!ok) {
+            var arm64Ok = false
+            for (url in arm64Urls) {
+                println("  Trying $url ...")
+                if (downloadWithRedirects(url, arm64File)) { arm64Ok = true; break }
+                arm64File.delete()
+            }
+            if (!arm64Ok) {
                 error("FATAL: Failed to download yt-dlp ARM64 binary. " +
                       "Check internet connection and try again: ./gradlew downloadYtDlpBinaries")
             }

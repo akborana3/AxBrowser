@@ -11,8 +11,13 @@ mkdir -p "$ARM64_DIR" "$X86_DIR"
 
 echo "⬇  Downloading yt-dlp ARM64 (for physical Android devices)..."
 curl -L --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 300 \
-  "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_android" \
-  -o "$ARM64_DIR/libytdlp.so"
+  "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64" \
+  -o "$ARM64_DIR/libytdlp.so" || {
+    echo "⚠  aarch64 download failed, trying yt-dlp_linux..."
+    curl -L --retry 3 --retry-delay 2 --connect-timeout 30 --max-time 300 \
+      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" \
+      -o "$ARM64_DIR/libytdlp.so"
+  }
 
 FILE_SIZE=$(wc -c < "$ARM64_DIR/libytdlp.so")
 if [ "$FILE_SIZE" -lt 1000000 ]; then
