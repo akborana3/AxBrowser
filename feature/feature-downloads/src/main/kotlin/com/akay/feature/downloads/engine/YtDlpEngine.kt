@@ -11,7 +11,11 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class YtDlpEngine(private val context: Context) {
+class YtDlpEngine(
+    private val context: Context,
+    private val proxyUrl: () -> String? = { null },
+    private val userAgent: () -> String? = { null }
+) {
 
     fun download(
         url: String,
@@ -19,6 +23,7 @@ class YtDlpEngine(private val context: Context) {
         formatId: String? = null
     ): Flow<DownloadProgressUnified> = callbackFlow {
         val request = YoutubeDLRequest(url).apply {
+            applyIdentity()
             addOption("-o", outputPath)
             addOption("--no-playlist")
             addOption("--retries", "3")
@@ -82,6 +87,13 @@ class YtDlpEngine(private val context: Context) {
         }
     }.flowOn(Dispatchers.IO)
 
+    private fun YoutubeDLRequest.applyIdentity() {
+        val proxy = proxyUrl()?.takeIf { it.isNotBlank() }
+        if (proxy != null) addOption("--proxy", proxy)
+        val agent = userAgent()?.takeIf { it.isNotBlank() }
+        if (agent != null) addOption("--user-agent", agent)
+    }
+
     private fun parseActualPath(line: String): String? {
         val destRegex = Regex("""\[download\] Destination: (.+)""")
         val destMatch = destRegex.find(line)
@@ -109,7 +121,8 @@ class YtDlpEngine(private val context: Context) {
 
     suspend fun getInfo(url: String): VideoInfo? = withContext(Dispatchers.IO) {
         runCatching {
-            val info = YoutubeDL.getInstance().getInfo(url)
+            val infoRequest = YoutubeDLRequest(url).apply { applyIdentity() }
+            val info = YoutubeDL.getInstance().getInfo(infoRequest)
             VideoInfo(
                 title     = info.title ?: "Unknown",
                 thumbnail = info.thumbnail ?: "",
@@ -131,6 +144,7 @@ class YtDlpEngine(private val context: Context) {
     ): VideoData = withContext(Dispatchers.IO) {
         runCatching {
             val request = YoutubeDLRequest(url).apply {
+                applyIdentity()
                 addOption("--dump-single-json")
                 addOption("--no-playlist")
                 addOption("--no-warnings")

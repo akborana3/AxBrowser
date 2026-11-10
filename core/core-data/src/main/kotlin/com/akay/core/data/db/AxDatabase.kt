@@ -50,7 +50,7 @@ import com.akay.core.data.db.entity.WatchEntity
         FuzzJobEntity::class,
         FuzzResultEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class AxDatabase : RoomDatabase() {

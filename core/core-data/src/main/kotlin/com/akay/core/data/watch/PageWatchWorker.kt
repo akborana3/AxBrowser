@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.akay.core.data.db.AxDatabase
+import com.akay.core.data.db.AxMigrations
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -44,6 +45,7 @@ class PageWatchWorker(context: Context, params: WorkerParameters) : CoroutineWor
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val label = inputData.getString(KEY_LABEL) ?: return@withContext Result.failure()
         val db = Room.databaseBuilder(applicationContext, AxDatabase::class.java, "axbrowser_database")
+            .addMigrations(*AxMigrations.ALL)
             .fallbackToDestructiveMigration()
             .build()
         try {

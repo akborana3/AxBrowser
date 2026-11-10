@@ -7,6 +7,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.akay.core.data.proxy.OkHttpProxies
+import com.akay.core.domain.model.ProxyAddresses
 import com.akay.core.domain.model.ProxyServer
 import com.akay.feature.browser.adblock.AdBlockEngine
 import com.akay.feature.browser.devconsole.NetworkInterceptor
@@ -25,14 +27,36 @@ class AxWebViewClient(
     private val adBlockerEnabled: () -> Boolean = { true },
     private val httpsUpgradeEnabled: () -> Boolean = { true },
     private val onMediaDetected: (url: String, mimeType: String?) -> Unit = { _, _ -> },
-    private val activeProxy: () -> ProxyServer? = { null }
+    private val activeProxy: () -> ProxyServer? = { null },
+    private val onMainFrameFailed: () -> Unit = {},
+    /**
+     * When this returns true it has taken the navigation and will call [proceed]
+     * itself after the proxy rotation is installed. Used so per-navigation
+     * rotation doesn't race the request it's supposed to cover.
+     */
+    private val deferForRotation: (proceed: () -> Unit) -> Boolean = { false }
 ) : WebViewClient() {
+
+    @Volatile
+    private var programmaticUrl: String? = null
+
+    /** Address-bar headers. Re-applied when a rotation cancels and replays a navigation. */
+    @Volatile
+    var extraHeaders: Map<String, String> = emptyMap()
+
+    /** The next main-frame load of [url] is ours (reload after a script change). Don't rotate for it. */
+    fun markProgrammaticLoad(url: String?) {
+        programmaticUrl = url
+    }
 
     override fun onReceivedHttpAuthRequest(view: WebView?, handler: HttpAuthHandler?, host: String?, realm: String?) {
         val proxy = activeProxy()
         val proxyUsername = proxy?.username
-        if (handler != null && proxy != null && !proxyUsername.isNullOrBlank() &&
-            (host.isNullOrBlank() || host.equals(proxy.host, ignoreCase = true))
+        // Only answer when the challenge names the proxy. A null host used to
+        // send the proxy password to whatever site asked for a login.
+        // SOCKS authentication is not an HTTP 407 and can't be answered here.
+        if (handler != null && proxy != null && !proxy.usesSocks && !proxyUsername.isNullOrBlank() &&
+            ProxyAddresses.matchesChallenge(proxy.host, host)
         ) {
             handler.proceed(proxyUsername, proxy.password.orEmpty())
             return
@@ -56,11 +80,13 @@ class AxWebViewClient(
         }.getOrNull()
 
     private val interceptorClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .build()
+        OkHttpProxies.apply(
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .followRedirects(true),
+            activeProxy
+        ).build()
     }
 
     private val videoExtensions = listOf(".mp4", ".webm", ".mkv", ".avi", ".mov", ".m3u8", ".mpd", ".ts", ".flv")
@@ -128,12 +154,39 @@ class AxWebViewClient(
     }
 
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-        val url = request?.url?.toString() ?: return false
-        if (httpsUpgradeEnabled() && url.startsWith("http://")) {
-            view?.loadUrl(url.replaceFirst("http://", "https://"))
+        val req = request ?: return false
+        val raw = req.url?.toString() ?: return false
+        val target = if (httpsUpgradeEnabled() && raw.startsWith("http://")) {
+            raw.replaceFirst("http://", "https://")
+        } else {
+            raw
+        }
+        if (!req.isForMainFrame) return loadReplacement(view, raw, target)
+        if (programmaticUrl != null && (raw == programmaticUrl || target == programmaticUrl)) {
+            programmaticUrl = null
+            return loadReplacement(view, raw, target)
+        }
+        val method = req.method ?: "GET"
+        val canRotate = !req.isRedirect &&
+            (method.equals("GET", ignoreCase = true) || method.equals("HEAD", ignoreCase = true)) &&
+            (target.startsWith("https://") || target.startsWith("http://"))
+        if (canRotate && view != null && deferForRotation {
+                programmaticUrl = target
+                val headers = extraHeaders
+                view.post {
+                    if (headers.isEmpty()) view.loadUrl(target) else view.loadUrl(target, headers)
+                }
+            }
+        ) {
             return true
         }
-        return false
+        return loadReplacement(view, raw, target)
+    }
+
+    private fun loadReplacement(view: WebView?, raw: String, target: String): Boolean {
+        if (target == raw) return false
+        view?.loadUrl(target)
+        return true
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -149,7 +202,18 @@ class AxWebViewClient(
     }
 
     override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
+        onMainFrameFailed()
         onError(description ?: "Unknown error")
+    }
+
+    override fun onReceivedError(
+        view: WebView,
+        request: WebResourceRequest,
+        error: android.webkit.WebResourceError
+    ) {
+        if (!request.isForMainFrame) return
+        onMainFrameFailed()
+        onError(error.description?.toString() ?: "Unknown error")
     }
 
     /**
