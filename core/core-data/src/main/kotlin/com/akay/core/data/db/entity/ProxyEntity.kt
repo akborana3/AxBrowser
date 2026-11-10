@@ -14,5 +14,8 @@ data class ProxyEntity(
     val username: String?,
     @ColumnInfo(name = "encrypted_password") val encryptedPassword: String?,
     val enabled: Boolean,
-    @ColumnInfo(name = "sort_order") val sortOrder: Int
+    @ColumnInfo(name = "sort_order") val sortOrder: Int,
+    val timezone: String? = null,
+    val locale: String? = null,
+    @ColumnInfo(name = "remote_dns", defaultValue = "0") val remoteDns: Boolean = false
 )

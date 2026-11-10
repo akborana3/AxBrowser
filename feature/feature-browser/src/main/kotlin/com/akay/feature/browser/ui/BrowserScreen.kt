@@ -55,6 +55,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.akay.core.ui.theme.Primary
 import com.akay.feature.browser.adblock.AdBlockEngine
+import com.akay.feature.browser.fingerprint.FingerprintWebSettings
 import com.akay.feature.browser.devconsole.DevConsolePanel
 import com.akay.feature.browser.devconsole.NetworkInterceptor
 import com.akay.feature.browser.reader.ReaderMode
@@ -74,10 +75,37 @@ import com.akay.feature.downloads.ui.MediaBottomSheet
 import com.akay.feature.downloads.viewmodel.DownloadViewModel
 import kotlin.math.roundToInt
 
-private const val DESKTOP_USER_AGENT =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
 private val INCOGNITO_BG = Color(0xFF201A2E)
+
+private fun installDocumentStartScript(
+    webView: WebView,
+    script: String?,
+    previous: androidx.webkit.ScriptHandler?
+): androidx.webkit.ScriptHandler? {
+    if (previous != null &&
+        androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)
+    ) {
+        runCatching { previous.remove() }
+    }
+    if (script.isNullOrEmpty()) return null
+    if (!androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        return null
+    }
+    return runCatching {
+        androidx.webkit.WebViewCompat.addDocumentStartJavaScript(webView, script, setOf("*"))
+    }.getOrNull()
+}
+
+@SuppressLint("MissingPermission") // ACCESS_NETWORK_STATE is declared on the application manifest.
+private fun shouldBlockImages(context: Context, batterySaver: Boolean): Boolean {
+    if (!batterySaver) return false
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+    val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+    val onWifi = caps == null ||
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+    return !onWifi
+}
 
 private fun Context.findActivity(): Activity? {
     var ctx = this
@@ -161,9 +189,13 @@ fun BrowserScreen(
     val networkMedia by NetworkInterceptor.detectedMedia.collectAsState()
     val blockedCount by AdBlockEngine.blockedCount.collectAsState()
     val suggestions by viewModel.suggestions.collectAsState()
-    val fingerprintScript by viewModel.fingerprintScript.collectAsState()
+    val fingerprint by viewModel.fingerprint.collectAsState()
+    val proxyReady by viewModel.proxyReady.collectAsState()
     var appliedFingerprintScript by remember { mutableStateOf<String?>(null) }
     var fingerprintScriptHandler by remember { mutableStateOf<androidx.webkit.ScriptHandler?>(null) }
+    var axClient by remember { mutableStateOf<AxWebViewClient?>(null) }
+    var originalUserAgent by remember { mutableStateOf<String?>(null) }
+    var metadataOverridden by remember { mutableStateOf(false) }
 
     // Preferences
     val erudaEnabled by viewModel.erudaEnabled.collectAsState(initial = false)
@@ -190,9 +222,6 @@ fun BrowserScreen(
     val customHeadersState = rememberUpdatedState(customHeaders)
 
     var appliedDesktopMode by remember { mutableStateOf<Boolean?>(null) }
-    // Default mobile UA with the "wv" WebView marker stripped so DRM/streaming
-    // sites (Netflix, etc.) and WebView-blocking sites treat us as real Chrome.
-    var mobileUserAgent by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { AdBlockEngine.ensureLoaded(context) }
 
@@ -591,10 +620,8 @@ fun BrowserScreen(
                             // Allow https pages to load http sub-resources some
                             // players need; EME/Widevine is enabled by default.
                             settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                            // Present as real Chrome (drop the "; wv" token).
-                            val baseUa = settings.userAgentString ?: ""
-                            mobileUserAgent = baseUa.replace(" wv)", ")").replace("; wv", "")
-                            if (!desktopMode) settings.userAgentString = mobileUserAgent
+                            // Captured once, before any spoof, so protection can be turned back off.
+                            if (originalUserAgent == null) originalUserAgent = settings.userAgentString ?: ""
                             WebView.setWebContentsDebuggingEnabled(true)
                             setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
@@ -623,10 +650,13 @@ fun BrowserScreen(
                                 findTotalMatches = numberOfMatches
                             }
 
-                            webViewClient = AxWebViewClient(
+                            val client = AxWebViewClient(
                                 context = ctx,
                                 activeProxy = { viewModel.activeProxy.value },
+                                onMainFrameFailed = { viewModel.onMainFrameLoadFinished() },
+                                deferForRotation = { proceed -> viewModel.deferMainFrameForRotation(proceed) },
                                 onPageStarted = { url ->
+                                    viewModel.onMainFrameLoadStarted()
                                     AdBlockEngine.resetCounter()
                                     viewModel.updateUrl(url)
                                     viewModel.updateNavigationState(
@@ -666,6 +696,7 @@ fun BrowserScreen(
                                     }
                                 },
                                 onPageFinished = { url, title ->
+                                    viewModel.onMainFrameLoadFinished()
                                     viewModel.updateProgress(100)
                                     viewModel.updateNavigationState(
                                         isLoading = false,
@@ -731,6 +762,8 @@ fun BrowserScreen(
                                 onHideFullscreen = { exitFullscreen() }
                             )
 
+                            axClient = client
+                            webViewClient = client
                             webView = this
                             // Native -> page channel for Intercept decisions. InterceptController
                             // holds the parked request; this pushes the operator's Forward/Drop back
@@ -743,7 +776,6 @@ fun BrowserScreen(
                                     null
                                 )
                             }
-                            loadUrl(uiState.url, customHeadersState.value)
                         }
                     },
                     update = { wv ->
@@ -751,27 +783,25 @@ fun BrowserScreen(
                         if (wv.settings.textZoom != fontSize) {
                             wv.settings.textZoom = fontSize
                         }
-                        if (fingerprintScript != appliedFingerprintScript) {
-                            appliedFingerprintScript = fingerprintScript
-                            runCatching { fingerprintScriptHandler?.remove() }
-                            fingerprintScriptHandler = null
-                            if (fingerprintScript != null &&
-                                androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)
-                            ) {
-                                fingerprintScriptHandler = runCatching {
-                                    androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
-                                        wv, fingerprintScript!!, setOf("*")
-                                    )
-                                }.getOrNull()
+                        val script = fingerprint?.script
+                        val navigating = proxyReady && uiState.url.isNotEmpty() && uiState.url != lastNavigatedUrl
+                        var reloadForIdentity = false
+                        if (script != appliedFingerprintScript) {
+                            fingerprintScriptHandler = installDocumentStartScript(wv, script, fingerprintScriptHandler)
+                            appliedFingerprintScript = script
+                            val current = wv.url
+                            if (!navigating && !current.isNullOrBlank() && current != "about:blank") {
+                                reloadForIdentity = true
                             }
                         }
-                        run {
-                            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-                            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
-                            val onWifi = caps == null || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
-                                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
-                            wv.settings.blockNetworkImage = uiState.batterySaverEnabled && !onWifi
-                        }
+                        metadataOverridden = FingerprintWebSettings.apply(
+                            settings = wv.settings,
+                            profile = fingerprint?.profile,
+                            desktopMode = desktopMode,
+                            originalUserAgent = originalUserAgent ?: "",
+                            metadataOverridden = metadataOverridden
+                        )
+                        wv.settings.blockNetworkImage = shouldBlockImages(context, uiState.batterySaverEnabled)
                         @Suppress("DEPRECATION")
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                             wv.settings.forceDark = if (darkWebsites)
@@ -781,14 +811,17 @@ fun BrowserScreen(
                         if (appliedDesktopMode != desktopMode) {
                             val firstApply = appliedDesktopMode == null
                             appliedDesktopMode = desktopMode
-                            wv.settings.userAgentString =
-                                if (desktopMode) DESKTOP_USER_AGENT else mobileUserAgent
-                            if (!firstApply) wv.reload()
+                            if (!firstApply) reloadForIdentity = true
                         }
-                        if (uiState.url.isNotEmpty() && uiState.url != lastNavigatedUrl) {
+                        if (reloadForIdentity && !navigating) {
+                            axClient?.markProgrammaticLoad(wv.url)
+                            wv.reload()
+                        }
+                        axClient?.extraHeaders = customHeadersState.value
+                        if (navigating) {
                             lastNavigatedUrl = uiState.url
-                            if (customHeadersState.value.isEmpty()) wv.loadUrl(uiState.url)
-                            else wv.loadUrl(uiState.url, customHeadersState.value)
+                            val headers = customHeadersState.value
+                            if (headers.isEmpty()) wv.loadUrl(uiState.url) else wv.loadUrl(uiState.url, headers)
                         }
                     },
                     modifier = Modifier.fillMaxSize()

@@ -248,30 +248,42 @@ fun SettingsScreen(
                 )
                 SettingsSwitchItem(
                     title = "Device fingerprint protection",
-                    subtitle = "Randomize signals sites use to recognize this device as new vs. returning",
+                    subtitle = if (uiState.fingerprintProfileLabel.isBlank()) {
+                        "Present one consistent device instead of this phone's real signals"
+                    } else {
+                        uiState.fingerprintProfileLabel
+                    },
                     checked = uiState.fingerprintProtectionEnabled,
                     onCheckedChange = { viewModel.setFingerprintProtectionEnabled(it) }
                 )
                 if (uiState.fingerprintProtectionEnabled) {
                     SettingsSwitchItem(
                         title = "Spoof canvas fingerprint",
+                        subtitle = "Stable noise on canvas reads, so repeat visits still match",
                         checked = uiState.fingerprintSpoofCanvas,
                         onCheckedChange = { viewModel.setFingerprintSpoofCanvas(it) }
                     )
                     SettingsSwitchItem(
+                        title = "Spoof audio fingerprint",
+                        subtitle = "Tiny stable noise on audio buffer reads",
+                        checked = uiState.fingerprintSpoofAudio,
+                        onCheckedChange = { viewModel.setFingerprintSpoofAudio(it) }
+                    )
+                    SettingsSwitchItem(
                         title = "Spoof WebGL renderer",
+                        subtitle = "Vendor and renderer strings that match the profile",
                         checked = uiState.fingerprintSpoofWebGl,
                         onCheckedChange = { viewModel.setFingerprintSpoofWebGl(it) }
                     )
                     SettingsSwitchItem(
                         title = "Spoof hardware info",
-                        subtitle = "CPU core count, memory, plugin list",
+                        subtitle = "CPU count, memory, and installed-font probes",
                         checked = uiState.fingerprintSpoofHardware,
                         onCheckedChange = { viewModel.setFingerprintSpoofHardware(it) }
                     )
                     SettingsNavigationItem(
                         title = "New device identity",
-                        subtitle = "Reset the spoofed profile - sites will see this as a brand-new device",
+                        subtitle = "Pick a new profile. The open page reloads so the new values apply",
                         onClick = { viewModel.regenerateFingerprintIdentity() }
                     )
                 }

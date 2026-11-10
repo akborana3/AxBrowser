@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.akay.core.data.ai.OpenRouterClient
 import com.akay.core.data.datastore.AxPreferences
+import com.akay.core.domain.model.FingerprintProfile
 import com.akay.feature.browser.adblock.AdBlockEngine
+import com.akay.feature.browser.fingerprint.FingerprintConfig
+import com.akay.feature.browser.fingerprint.FingerprintSpoofing
 import com.akay.core.domain.model.Bookmark
 import com.akay.core.domain.model.HistoryItem
 import com.akay.core.domain.model.SavedCredential
@@ -55,6 +58,16 @@ data class BrowserUiState(
     val pageHtml: String = "",
     val detectedMediaCount: Int = 0,
     val batterySaverEnabled: Boolean = false
+)
+
+data class FingerprintInjection(val script: String, val profile: FingerprintProfile)
+
+private data class FingerprintToggles(
+    val enabled: Boolean,
+    val canvas: Boolean,
+    val webGl: Boolean,
+    val hardware: Boolean,
+    val audio: Boolean
 )
 
 sealed class BrowserUiEvent {
@@ -148,34 +161,62 @@ class BrowserViewModel @Inject constructor(
 
     // ---- Device fingerprint spoofing ----
     // Declared before init{} on purpose: init calls observeFingerprintSettings(),
-    // whose coroutine can write to _fingerprintScript as early as its first
+    // whose coroutine can write to _fingerprint as early as its first
     // synchronous emission - if that property were declared *after* init{} in
     // the class body, Kotlin's in-order member initialization means it could
     // still be null (uninitialized) at that point, causing an intermittent NPE
     // crash depending on how fast the underlying DataStore reads resolve.
-    private val _fingerprintScript = MutableStateFlow<String?>(null)
-    val fingerprintScript: StateFlow<String?> = _fingerprintScript.asStateFlow()
+    private val _fingerprint = MutableStateFlow<FingerprintInjection?>(null)
+    val fingerprint: StateFlow<FingerprintInjection?> = _fingerprint.asStateFlow()
+
+    val proxyReady = proxyManager.proxyReady
+
+    fun onMainFrameLoadStarted() = proxyManager.onMainFrameLoadStarted()
+
+    fun onMainFrameLoadFinished() = proxyManager.onMainFrameLoadFinished()
+
+    /** @return true when the navigation must wait; [proceed] runs after the next proxy is installed. */
+    fun deferMainFrameForRotation(proceed: () -> Unit): Boolean =
+        proxyManager.interceptMainFrameNavigation(proceed)
 
     private fun observeFingerprintSettings() {
         viewModelScope.launch {
             val fallbackSeed = preferences.getOrCreateFingerprintSeed()
-            kotlinx.coroutines.flow.combine(
+            val toggles = kotlinx.coroutines.flow.combine(
                 preferences.fingerprintProtectionEnabled,
                 preferences.fingerprintSpoofCanvas,
                 preferences.fingerprintSpoofWebGl,
                 preferences.fingerprintSpoofHardware,
-                preferences.fingerprintDeviceSeed
-            ) { enabled, spoofCanvas, spoofWebGl, spoofHardware, seed ->
-                if (!enabled) {
+                preferences.fingerprintSpoofAudio
+            ) { enabled, canvas, webGl, hardware, audio ->
+                FingerprintToggles(enabled, canvas, webGl, hardware, audio)
+            }
+            kotlinx.coroutines.flow.combine(
+                toggles,
+                preferences.fingerprintDeviceSeed,
+                preferences.isDesktopMode,
+                proxyManager.activeProxy
+            ) { toggle, seed, desktop, proxy ->
+                if (!toggle.enabled) {
                     null
                 } else {
-                    com.akay.feature.browser.fingerprint.FingerprintSpoofing.buildScript(
-                        seed.ifBlank { fallbackSeed }, spoofCanvas, spoofWebGl, spoofHardware
+                    val resolvedSeed = seed.ifBlank { fallbackSeed }
+                    val profile = FingerprintProfile.fromSeed(resolvedSeed, desktop)
+                    val script = FingerprintSpoofing.buildScript(
+                        FingerprintConfig(
+                            seed = resolvedSeed,
+                            spoofCanvas = toggle.canvas,
+                            spoofWebGl = toggle.webGl,
+                            spoofHardware = toggle.hardware,
+                            spoofAudio = toggle.audio,
+                            desktop = desktop,
+                            timeZone = proxy?.timezone,
+                            locale = proxy?.locale
+                        )
                     )
+                    FingerprintInjection(script, profile)
                 }
-            }.collect { script ->
-                _fingerprintScript.value = script
-            }
+            }.collect { _fingerprint.value = it }
         }
     }
 
@@ -437,7 +478,6 @@ class BrowserViewModel @Inject constructor(
             else -> "$searchEngineUrl${URLEncoder.encode(url, "UTF-8")}"
         }
         _uiState.value = _uiState.value.copy(url = processedUrl, displayUrl = processedUrl)
-        proxyManager.onNavigation()
         viewModelScope.launch {
             _uiState.value.activeTab?.let { tab ->
                 tabRepository.updateTab(tab.copy(url = processedUrl, lastAccessed = System.currentTimeMillis()))
