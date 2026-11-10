@@ -2,11 +2,15 @@ package com.akay.feature.browser.agent
 
 import com.akay.core.data.datastore.AxPreferences
 import com.akay.core.data.proxy.ProxyManager
+import com.akay.core.domain.model.FingerprintProfile
+import com.akay.core.domain.model.ProxyListParser
+import com.akay.core.domain.model.ProxyParseOutcome
+import com.akay.core.domain.model.ProxyRotation
 import com.akay.core.domain.model.ProxyRotationMode
 import com.akay.core.domain.model.ProxyType
 import com.akay.core.domain.repository.ProxyRepository
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -38,7 +42,7 @@ class IdentityTools @Inject constructor(
 
         val enabled = runCatching { preferences.proxyEnabled.first() }.getOrDefault(false)
         val all = runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList())
-        val usable = all.filter { it.enabled && it.host.isNotBlank() && it.port in 1..65535 }
+        val usable = ProxyRotation.eligible(all)
         val active = proxyManager.activeProxy.value
         val mode = runCatching { preferences.proxyRotationMode.first() }.getOrDefault(ProxyRotationMode.MANUAL.name)
         val interval = runCatching { preferences.proxyRotationIntervalMinutes.first() }.getOrDefault(10)
@@ -66,18 +70,22 @@ class IdentityTools @Inject constructor(
         val seed = runCatching { getOrCreateSeed() }.getOrDefault("")
         sb.append("\nFINGERPRINT\n")
         if (!fpEnabled) {
-            sb.append("- protection OFF: the page sees this device's real canvas/WebGL/hardware values\n")
+            sb.append("- protection OFF: the page sees this device's real values\n")
         } else {
             val canvas = runCatching { preferences.fingerprintSpoofCanvas.first() }.getOrDefault(true)
             val webgl = runCatching { preferences.fingerprintSpoofWebGl.first() }.getOrDefault(true)
             val hardware = runCatching { preferences.fingerprintSpoofHardware.first() }.getOrDefault(true)
+            val audio = runCatching { preferences.fingerprintSpoofAudio.first() }.getOrDefault(true)
             val on = listOfNotNull(
                 "canvas".takeIf { canvas },
+                "audio".takeIf { audio },
                 "WebGL".takeIf { webgl },
-                "hardware".takeIf { hardware }
-            ).ifEmpty { listOf("nothing - all three spoofing toggles are off") }
-            sb.append("- protection ON, spoofing ${on.joinToString(", ")}\n")
-            sb.append("- device profile: ${describeSeed(seed)}\n")
+                "hardware/fonts".takeIf { hardware }
+            ).ifEmpty { listOf("the base profile only (UA, screen, platform, WebRTC)") }
+            val desktop = runCatching { preferences.isDesktopMode.first() }.getOrDefault(false)
+            sb.append("- protection ON, also spoofing ${on.joinToString(", ")}\n")
+            sb.append("- device profile: ${describeSeed(seed, desktop)}\n")
+            sb.append("- WebRTC host candidates are blocked while protection is on\n")
         }
         sb.append("\nBoth take effect on the next page load - call navigate/reload after changing them.")
         return sb.toString()
@@ -97,16 +105,31 @@ class IdentityTools @Inject constructor(
         username: String?,
         password: String?
     ): String {
-        val cleanHost = host.trim().removePrefix("http://").removePrefix("https://").removePrefix("socks4://")
-            .removePrefix("socks5://").trimEnd('/')
-        if (cleanHost.isBlank()) return "A proxy needs a host. Expected keys: host, port, type (HTTP|HTTPS|SOCKS4|SOCKS5), optional label/username/password."
-        if (port !in 1..65535) return "Port $port is not a valid TCP port (1-65535)."
+        val rawHost = host.trim()
+        val parsed = if (
+            rawHost.contains("://") || rawHost.contains("@") ||
+            (rawHost.startsWith("[") && rawHost.contains("]:"))
+        ) {
+            ProxyListParser.parseEntry(rawHost)
+        } else {
+            null
+        }
+        if (parsed is ProxyParseOutcome.Invalid) return parsed.message
+        val parsedProxy = (parsed as? ProxyParseOutcome.Ok)?.proxy
+        val cleanHost = parsedProxy?.host ?: rawHost.trim()
+        val resolvedPort = parsedProxy?.port ?: port
+        val proxyType = parsedProxy?.type ?: parseType(type)
+        val remoteDns = parsedProxy?.remoteDns ?: false
+        if (cleanHost.isBlank()) return "A proxy needs a host. Expected keys: host, port, type (HTTP|HTTPS|SOCKS4|SOCKS5), optional label/username/password. A full URL such as socks5://host:1080 is also accepted."
+        if (resolvedPort !in 1..65535) return "Port $resolvedPort is not a valid TCP port (1-65535)."
+        if (cleanHost.any { it.isWhitespace() }) return "Host can't contain spaces."
 
-        val proxyType = parseType(type)
         val existing = runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList())
-            .firstOrNull { it.host.equals(cleanHost, ignoreCase = true) && it.port == port && it.type == proxyType }
+            .firstOrNull { it.host.equals(cleanHost, ignoreCase = true) && it.port == resolvedPort && it.type == proxyType }
 
-        val name = label.trim().ifBlank { "$cleanHost:$port" }
+        val name = label.trim().ifBlank { "$cleanHost:$resolvedPort" }
+        val resolvedUser = username?.trim()?.takeIf { it.isNotBlank() } ?: parsedProxy?.username
+        val resolvedPassword = password?.takeIf { it.isNotBlank() } ?: parsedProxy?.password
 
         val saved = runCatching {
             proxyRepository.save(
@@ -114,10 +137,13 @@ class IdentityTools @Inject constructor(
                 label = name,
                 type = proxyType,
                 host = cleanHost,
-                port = port,
-                username = username?.trim()?.takeIf { it.isNotBlank() },
-                password = password?.takeIf { it.isNotBlank() },
-                enabled = true
+                port = resolvedPort,
+                username = resolvedUser,
+                password = resolvedPassword,
+                enabled = true,
+                timezone = existing?.timezone,
+                locale = existing?.locale,
+                remoteDns = if (parsedProxy != null) remoteDns else existing?.remoteDns ?: false
             )
         }
         if (saved.isFailure) {
@@ -128,17 +154,19 @@ class IdentityTools @Inject constructor(
 
         // Point the active index at the entry we just wrote, using the same ordering ProxyManager
         // filters with (only enabled, complete entries count when it picks an index).
-        val usable = runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList())
-            .filter { it.enabled && it.host.isNotBlank() && it.port in 1..65535 }
-        val index = usable.indexOfLast { it.host.equals(cleanHost, ignoreCase = true) && it.port == port && it.type == proxyType }
-        if (index >= 0) runCatching { preferences.setProxyActiveIndex(index) }
+        val usable = ProxyRotation.eligible(
+            runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList())
+        )
+        val index = usable.indexOfLast { it.host.equals(cleanHost, ignoreCase = true) && it.port == resolvedPort && it.type == proxyType }
+        if (index >= 0) runCatching { preferences.setActiveProxy(index, usable[index].id) }
 
-        delay(400) // let ProxyManager's collector apply it to the live session before reporting
-        val active = proxyManager.activeProxy.value
-        val applied = active != null && active.host.equals(cleanHost, ignoreCase = true) && active.port == port
+        val active = withTimeoutOrNull(2_000) {
+            proxyManager.activeProxy.first { it != null && it.host.equals(cleanHost, ignoreCase = true) && it.port == resolvedPort }
+        } ?: proxyManager.activeProxy.value
+        val applied = active != null && active.host.equals(cleanHost, ignoreCase = true) && active.port == resolvedPort
         val failure = proxyManager.lastError.value
         return buildString {
-            append("Proxy ${if (existing != null) "updated" else "added"}: $name [$proxyType] $cleanHost:$port")
+            append("Proxy ${if (existing != null) "updated" else "added"}: $name [$proxyType] $cleanHost:$resolvedPort")
             if (!username.isNullOrBlank()) append(" (with credentials)")
             append(".\n")
             when {
@@ -151,15 +179,13 @@ class IdentityTools @Inject constructor(
 
     /** Moves to the next enabled proxy in the list. */
     suspend fun rotate(): String {
-        val usable = runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList()).filter { it.enabled }
+        val usable = ProxyRotation.eligible(runCatching { proxyRepository.getAllOnce() }.getOrDefault(emptyList()))
         if (usable.isEmpty()) return "No enabled proxies to rotate through - add one with set_proxy first (or configure them in Settings > Proxy)."
         if (usable.size == 1) {
             return "Only one enabled proxy (${usable[0].label} ${usable[0].host}:${usable[0].port}) - nothing to rotate to. Add a second one for rotation to change the exit IP."
         }
         val before = proxyManager.activeProxy.value
-        proxyManager.rotateNext()
-        delay(700)
-        val after = proxyManager.activeProxy.value
+        val after = proxyManager.rotateAndAwait()
         return when {
             after == null -> "Requested a rotation from ${usable.size} enabled proxies, but no proxy is currently applied. Turn the proxy setting on (set_proxy does that) - or check proxy_status for the last error."
             before != null && after.host == before.host && after.port == before.port ->
@@ -191,8 +217,9 @@ class IdentityTools @Inject constructor(
     suspend fun clear(): String {
         val wasActive = proxyManager.activeProxy.value
         runCatching { preferences.setProxyEnabled(false) }
-        delay(400)
-        val stillActive = proxyManager.activeProxy.value
+        val stillActive = withTimeoutOrNull(2_000) {
+            proxyManager.activeProxy.first { it == null }
+        } ?: proxyManager.activeProxy.value
         return if (stillActive != null) {
             "Asked WebView to stop proxying, but traffic is still going through ${stillActive.label} ${stillActive.host}:${stillActive.port}. Try clearing it again, or check proxy_status."
         } else {
@@ -246,14 +273,15 @@ class IdentityTools @Inject constructor(
 
         val nowEnabled = runCatching { preferences.fingerprintProtectionEnabled.first() }.getOrDefault(false)
         val currentSeed = runCatching { getOrCreateSeed() }.getOrDefault("")
+        val desktop = runCatching { preferences.isDesktopMode.first() }.getOrDefault(false)
         return buildString {
             append("Fingerprint updated: ${changes.joinToString(", ")}.\n")
             if (!nowEnabled) {
-                append("Protection is off, so the page still sees this device's real values - pass enabled=true (and keep at least one spoofing toggle on) to actually change what it sees.")
+                append("Protection is off, so the page still sees this device's real values - pass enabled=true to apply the profile.")
             } else {
-                append("Device profile now ${describeSeed(currentSeed)}")
-                if (seed != null) append(" - a canvas/WebGL/hardware combination this browser has never presented before")
-                append(".\nReload the page (navigate or run_js location.reload()) for it to apply - the script is injected at document start, so the current page keeps the old identity until it reloads.")
+                append("Device profile now ${describeSeed(currentSeed, desktop)}")
+                if (seed != null) append(" - a new identity this browser has not presented before")
+                append(".\nThe page reloads on its own when the script changes. Until that reload finishes, the current document keeps the old identity.")
             }
         }
     }
@@ -264,10 +292,10 @@ class IdentityTools @Inject constructor(
 
     /** A short, non-reversible label for the seed - the seed itself is this device's identity and
      *  does not belong in a chat transcript or a bug report. */
-    private fun describeSeed(seed: String): String {
+    private fun describeSeed(seed: String, desktop: Boolean): String {
         if (seed.isBlank()) return "unset"
-        val fingerprint = ((seed.hashCode().toLong() and 0xFFFFFFFFL) % 100_000L).toString().padStart(5, '0')
-        return "profile #$fingerprint (from seed ${seed.take(8)}...)"
+        val profile = FingerprintProfile.fromSeed(seed, desktop)
+        return "${profile.summary} (seed ${seed.take(8)}...)"
     }
 
     private fun parseType(raw: String): ProxyType = when (raw.trim().uppercase().replace(".", "")) {

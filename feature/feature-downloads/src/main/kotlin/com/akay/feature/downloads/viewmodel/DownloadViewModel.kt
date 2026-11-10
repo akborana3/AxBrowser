@@ -16,6 +16,9 @@ import androidx.core.content.getSystemService
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.akay.core.data.datastore.AxPreferences
+import com.akay.core.data.proxy.OkHttpProxies
+import com.akay.core.data.proxy.ProxyManager
+import com.akay.core.domain.model.FingerprintProfile
 import com.akay.feature.downloads.engine.DirectDownloadEngine
 import com.akay.feature.downloads.engine.DownloadProgressUnified
 import com.akay.feature.downloads.engine.YtDlpEngine
@@ -82,7 +85,8 @@ data class DownloadManagerState(
 @HiltViewModel
 class DownloadViewModel @Inject constructor(
     application: Application,
-    private val preferences: AxPreferences
+    private val preferences: AxPreferences,
+    private val proxyManager: ProxyManager
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(DownloadManagerState())
@@ -92,20 +96,28 @@ class DownloadViewModel @Inject constructor(
     private val pendingWifiQueue = mutableListOf<DownloadItem>()
     private val connectivityManager: ConnectivityManager? = application.getSystemService()
 
-    private val ytDlpEngine = YtDlpEngine(application)
+    @Volatile private var downloadUserAgent: String = GENERIC_DOWNLOAD_UA
+
+    private val ytDlpEngine = YtDlpEngine(
+        context = application,
+        proxyUrl = { proxyManager.activeProxy.value?.toDownloadProxyUrl() },
+        userAgent = { downloadUserAgent }
+    )
     private val directEngine = DirectDownloadEngine(
-        okhttp3.OkHttpClient.Builder()
-            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-            .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .addInterceptor { chain ->
-                val req = chain.request().newBuilder()
-                    .addHeader("User-Agent", "Mozilla/5.0 (Android) AxBrowser/1.0")
-                    .build()
-                chain.proceed(req)
-            }
-            .build()
+        OkHttpProxies.apply(
+            okhttp3.OkHttpClient.Builder()
+                .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+                .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+                .addInterceptor { chain ->
+                    val req = chain.request().newBuilder()
+                        .header("User-Agent", downloadUserAgent)
+                        .build()
+                    chain.proceed(req)
+                },
+            { proxyManager.activeProxy.value }
+        ).build()
     )
     private val downloadJobs = mutableMapOf<String, Job>()
     private val downloadDir: File = run {
@@ -118,6 +130,16 @@ class DownloadViewModel @Inject constructor(
         checkYtDlp()
         viewModelScope.launch {
             preferences.wifiOnlyDownloads.collect { wifiOnlyDownloads = it }
+        }
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(
+                preferences.fingerprintProtectionEnabled,
+                preferences.fingerprintDeviceSeed,
+                preferences.isDesktopMode
+            ) { enabled, seed, desktop ->
+                if (!enabled || seed.isBlank()) GENERIC_DOWNLOAD_UA
+                else FingerprintProfile.fromSeed(seed, desktop).userAgent
+            }.collect { downloadUserAgent = it }
         }
         registerWifiCallback()
     }
@@ -423,6 +445,11 @@ class DownloadViewModel @Inject constructor(
             val uri = Uri.fromFile(file)
             context.startActivity(Intent(Intent.ACTION_SEND).apply { type = "*/*"; putExtra(Intent.EXTRA_STREAM, uri) })
         }
+    }
+
+    private companion object {
+        const val GENERIC_DOWNLOAD_UA =
+            "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     }
 
     private fun updateItem(id: String, block: (DownloadItem) -> DownloadItem) {

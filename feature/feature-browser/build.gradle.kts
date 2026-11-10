@@ -7,6 +7,9 @@ plugins {
 
 android {
     namespace = "com.akay.feature.browser"
+    testOptions {
+        unitTests.all { it.useJUnitPlatform() }
+    }
 }
 
 dependencies {

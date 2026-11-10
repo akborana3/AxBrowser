@@ -13,12 +13,14 @@ import com.akay.core.data.datastore.AxPreferences
 import com.akay.core.data.storage.AxStorage
 import com.akay.core.data.userscript.UserScript
 import com.akay.core.data.userscript.UserScriptCodec
+import com.akay.core.domain.model.FingerprintProfile
 import com.akay.core.domain.repository.HistoryRepository
 import com.akay.feature.downloads.engine.YtDlpSetup
 import com.yausername.youtubedl_android.YoutubeDL
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +68,8 @@ data class SettingsUiState(
     val fingerprintSpoofCanvas: Boolean = true,
     val fingerprintSpoofWebGl: Boolean = true,
     val fingerprintSpoofHardware: Boolean = true,
+    val fingerprintSpoofAudio: Boolean = true,
+    val fingerprintProfileLabel: String = "",
     val aiApiKeySet: Boolean = false,
     val aiModel: String = "meta-llama/llama-3.1-8b-instruct:free",
     val aiFreeModels: List<OpenRouterModel> = emptyList(),
@@ -254,6 +258,18 @@ class SettingsViewModel @Inject constructor(
             preferences.fingerprintSpoofHardware.collect { _uiState.value = _uiState.value.copy(fingerprintSpoofHardware = it) }
         }
         viewModelScope.launch {
+            preferences.fingerprintSpoofAudio.collect { _uiState.value = _uiState.value.copy(fingerprintSpoofAudio = it) }
+        }
+        viewModelScope.launch {
+            combine(
+                preferences.fingerprintProtectionEnabled,
+                preferences.fingerprintDeviceSeed,
+                preferences.isDesktopMode
+            ) { enabled, seed, desktop ->
+                if (!enabled || seed.isBlank()) "" else FingerprintProfile.fromSeed(seed, desktop).summary
+            }.collect { _uiState.value = _uiState.value.copy(fingerprintProfileLabel = it) }
+        }
+        viewModelScope.launch {
             preferences.openRouterApiKey.collect { _uiState.value = _uiState.value.copy(aiApiKeySet = !it.isNullOrBlank()) }
         }
         viewModelScope.launch {
@@ -307,6 +323,7 @@ class SettingsViewModel @Inject constructor(
     fun setFingerprintSpoofCanvas(enabled: Boolean) { viewModelScope.launch { preferences.setFingerprintSpoofCanvas(enabled) } }
     fun setFingerprintSpoofWebGl(enabled: Boolean) { viewModelScope.launch { preferences.setFingerprintSpoofWebGl(enabled) } }
     fun setFingerprintSpoofHardware(enabled: Boolean) { viewModelScope.launch { preferences.setFingerprintSpoofHardware(enabled) } }
+    fun setFingerprintSpoofAudio(enabled: Boolean) { viewModelScope.launch { preferences.setFingerprintSpoofAudio(enabled) } }
     fun regenerateFingerprintIdentity() { viewModelScope.launch { preferences.regenerateFingerprintSeed() } }
 
     fun setAiApiKey(key: String) {

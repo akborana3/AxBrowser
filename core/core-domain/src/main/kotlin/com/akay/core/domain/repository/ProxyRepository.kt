@@ -15,7 +15,10 @@ interface ProxyRepository {
         port: Int,
         username: String?,
         password: String?,
-        enabled: Boolean
+        enabled: Boolean,
+        timezone: String? = null,
+        locale: String? = null,
+        remoteDns: Boolean = false
     )
     suspend fun delete(id: String)
     suspend fun setEnabled(id: String, enabled: Boolean)
